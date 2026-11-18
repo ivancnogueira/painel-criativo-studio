@@ -101,7 +101,7 @@ fi
 
 if [ "$RESTARTED" -eq 1 ]; then
   sleep 2
-  LISTEN_PORT="3008"
+  LISTEN_PORT="3009"
   if [ -f ".env" ]; then
     ENV_PORT="$(grep -E '^PORT=' .env | head -n1 | cut -d= -f2- | tr -d '"\r ' || true)"
     [ -n "$ENV_PORT" ] && LISTEN_PORT="$ENV_PORT"

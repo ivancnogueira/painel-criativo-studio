@@ -13,7 +13,7 @@ Este servidor é 100% independente da Landing Page e funciona em Node.js ≥ 22 
    - **Name:** `painel-criativo-studio`
    - **Run Opt:** `start` (ou arquivo `server.js`)
    - **Node Version:** `v22.x` (obrigatório `>= 22.0.0` por conta de `node:sqlite`)
-   - **Port:** `3008`
+   - **Port:** `3009`
    - **Domain:** `painel.criativoaistudio.com.br` (Lembre-se de criar o registro DNS Tipo `A` apontando `painel` para o IP da sua VPS!)
 
 ### 2. Configurar as Variáveis de Ambiente (`.env`)

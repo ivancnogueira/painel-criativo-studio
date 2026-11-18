@@ -65,7 +65,7 @@ const isEntryPoint =
 
 if (isEntryPoint) {
   const { app } = createPainelApp();
-  const PORT = Number(process.env.PORT) || 3008;
+  const PORT = Number(process.env.PORT) || 3009;
   const HOST = process.env.HOST || "0.0.0.0";
   app.listen(PORT, HOST, () => {
     console.log(`[Criativo Painel] Servidor ativo em http://${HOST}:${PORT}`);
