@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+dados/
+*.db
+*.db-wal
+*.db-shm
+logs/
+whatsapp-auth/
+releases/
+.DS_Store
+Thumbs.db

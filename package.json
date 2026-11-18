@@ -1,0 +1,19 @@
+{
+  "name": "criativo-ai-studio-painel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Painel Administrativo, Hub Central de Licenças Ed25519, Webhooks de Checkout e Disparador E-mail/WhatsApp Oficial do Criativo AI Studio Online.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "nodemailer": "^6.9.16"
+  }
+}

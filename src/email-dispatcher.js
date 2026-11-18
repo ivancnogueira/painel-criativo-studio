@@ -1,0 +1,303 @@
+import nodemailer from "nodemailer";
+
+const DEFAULT_DOWNLOAD_LINKS = {
+  windows: "https://github.com/ivancnogueira/criativo-studio/releases/latest/download/CriativoAIStudio-Setup-1.0.0.exe",
+  macos: "https://github.com/ivancnogueira/criativo-studio/releases/latest/download/CriativoAIStudio-1.0.0-universal.dmg",
+  linux: "https://github.com/ivancnogueira/criativo-studio/releases/latest/download/CriativoAIStudio-1.0.0-x86_64.AppImage",
+};
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function planLimitsText(license) {
+  const servers = license.max_servers < 0 ? "Ilimitados" : `${license.max_servers} servidor(es)`;
+  const machines = `${license.custom_max_machines ?? license.max_machines} computador(es)`;
+  const planMap = {
+    individual: "Licença Individual",
+    agencia_10: "Licença Agência 10",
+    agencia_ilimitada: "Licença Agência Ilimitada",
+  };
+  return {
+    planName: planMap[license.plan_tier] || license.plan_tier,
+    servers,
+    machines,
+  };
+}
+
+export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWNLOAD_LINKS, painelUrl = "https://painel.criativoaistudio.com.br" }) {
+  const meta = planLimitsText(license);
+  const firstName = String(license.customer_name || "").trim().split(/\s+/)[0] || "criador(a)";
+  const upgrades = Array.isArray(license.upgrades) ? license.upgrades : [];
+
+  const subject = `🔑 Sua Licença do Criativo AI Studio Online está pronta! (${license.license_key})`;
+
+  const html = `<!doctype html>
+<html lang="pt-BR">
+<body style="margin:0;padding:0;background:#0b0d12;color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0b0d12;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#141720;border:1px solid #262b38;border-radius:18px;overflow:hidden;">
+          <tr>
+            <td style="padding:28px 32px;border-bottom:1px solid #232836;background:linear-gradient(135deg,#181c28 0%,#12141c 100%);">
+              <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#ff6b00;">Criativo AI Studio Online</div>
+              <h1 style="margin:8px 0 4px 0;font-size:22px;color:#ffffff;">Olá, ${escapeHtml(firstName)}! Seu acesso foi liberado 🚀</h1>
+              <p style="margin:0;font-size:14px;color:#9ca3af;">Guarde os dados abaixo para ativar o aplicativo no seu computador.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 32px;">
+              <div style="background:#0e1017;border:1px solid #2a3040;border-radius:14px;padding:20px;margin-bottom:22px;">
+                <div style="font-size:12px;color:#9ca3af;margin-bottom:4px;">E-mail de ativação:</div>
+                <div style="font-size:15px;font-weight:600;color:#ffffff;margin-bottom:14px;">${escapeHtml(license.customer_email)}</div>
+
+                <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Sua Chave de Licença:</div>
+                <div style="background:#191d29;border:1px dashed #ff6b00;border-radius:10px;padding:12px 16px;font-family:'JetBrains Mono',Consolas,monospace;font-size:18px;font-weight:700;color:#ff8c38;letter-spacing:1.2px;text-align:center;">
+                  ${escapeHtml(license.license_key)}
+                </div>
+
+                <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;font-size:13px;color:#d1d5db;">
+                  <tr>
+                    <td style="padding:4px 0;color:#9ca3af;">Plano:</td>
+                    <td align="right" style="padding:4px 0;font-weight:600;color:#10b981;">${escapeHtml(meta.planName)}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:4px 0;color:#9ca3af;">Servidores / Marcas:</td>
+                    <td align="right" style="padding:4px 0;font-weight:600;">${escapeHtml(meta.servers)}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:4px 0;color:#9ca3af;">Computadores simultâneos:</td>
+                    <td align="right" style="padding:4px 0;font-weight:600;">${escapeHtml(meta.machines)}</td>
+                  </tr>
+                  ${
+                    upgrades.length > 0
+                      ? `<tr><td style="padding:4px 0;color:#9ca3af;">Upgrades incluídos:</td><td align="right" style="padding:4px 0;font-weight:600;color:#38bdf8;">${escapeHtml(upgrades.join(", ").toUpperCase())}</td></tr>`
+                      : ""
+                  }
+                </table>
+              </div>
+
+              <h2 style="margin:0 0 12px 0;font-size:15px;color:#ffffff;">1. Baixe o Aplicativo Oficial</h2>
+              <table width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:22px;">
+                <tr>
+                  <td align="center" style="background:#1e2330;border:1px solid #2e3547;border-radius:10px;padding:10px;">
+                    <a href="${escapeHtml(downloadLinks.windows)}" style="color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;display:block;">🪟 Windows (.exe)</a>
+                  </td>
+                  <td align="center" style="background:#1e2330;border:1px solid #2e3547;border-radius:10px;padding:10px;">
+                    <a href="${escapeHtml(downloadLinks.macos)}" style="color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;display:block;">🍏 macOS (.dmg)</a>
+                  </td>
+                  <td align="center" style="background:#1e2330;border:1px solid #2e3547;border-radius:10px;padding:10px;">
+                    <a href="${escapeHtml(downloadLinks.linux)}" style="color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;display:block;">🐧 Linux (.AppImage)</a>
+                  </td>
+                </tr>
+              </table>
+
+              <h2 style="margin:0 0 8px 0;font-size:15px;color:#ffffff;">2. Como ativar em 30 segundos</h2>
+              <ol style="margin:0;padding-left:18px;font-size:13.5px;color:#d1d5db;line-height:1.65;">
+                <li>Instale e abra o <strong>Criativo AI Studio</strong> no seu computador.</li>
+                <li>Digite exatamente o e-mail <strong>${escapeHtml(license.customer_email)}</strong>.</li>
+                <li>Cole a chave <strong>${escapeHtml(license.license_key)}</strong> e clique em <strong>Ativar licença agora</strong>.</li>
+              </ol>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px;background:#0e1017;border-top:1px solid #232836;font-size:12px;color:#6b7280;text-align:center;">
+              Enviado automaticamente pelo Hub Central · ${escapeHtml(painelUrl)}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    `Olá, ${firstName}! Sua licença do Criativo AI Studio Online foi liberada.`,
+    "",
+    `E-mail de ativação: ${license.customer_email}`,
+    `Chave de licença: ${license.license_key}`,
+    `Plano: ${meta.planName} (${meta.servers} · ${meta.machines})`,
+    "",
+    "Downloads oficiais:",
+    `- Windows: ${downloadLinks.windows}`,
+    `- macOS: ${downloadLinks.macos}`,
+    `- Linux: ${downloadLinks.linux}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+export function createEmailDispatcher({ vault, logNotification, fetchImpl = globalThis.fetch, transportFactory }) {
+  function getConfig() {
+    const provider = vault.getSetting("email_provider", process.env.SMTP_HOST ? "smtp" : "none");
+    return {
+      provider, // "none" | "smtp" | "resend"
+      smtpHost: vault.getSetting("smtp_host", process.env.SMTP_HOST || ""),
+      smtpPort: Number(vault.getSetting("smtp_port", process.env.SMTP_PORT || 465)) || 465,
+      smtpSecure: Boolean(vault.getSetting("smtp_secure", process.env.SMTP_SECURE !== "false")),
+      smtpUser: vault.getSetting("smtp_user", process.env.SMTP_USER || ""),
+      smtpPass: vault.getSetting("smtp_pass", process.env.SMTP_PASS || ""),
+      fromName: vault.getSetting("smtp_from_name", process.env.SMTP_FROM_NAME || "Criativo AI Studio"),
+      fromEmail: vault.getSetting("smtp_from_email", process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || ""),
+      resendApiKey: vault.getSetting("resend_api_key", process.env.RESEND_API_KEY || ""),
+      downloadLinks: vault.getSetting("download_links", DEFAULT_DOWNLOAD_LINKS) || DEFAULT_DOWNLOAD_LINKS,
+      painelUrl: process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br",
+    };
+  }
+
+  function getPublicConfig() {
+    const cfg = getConfig();
+    return {
+      provider: cfg.provider,
+      smtpHost: cfg.smtpHost,
+      smtpPort: cfg.smtpPort,
+      smtpSecure: cfg.smtpSecure,
+      smtpUser: cfg.smtpUser,
+      hasSmtpPass: Boolean(cfg.smtpPass),
+      fromName: cfg.fromName,
+      fromEmail: cfg.fromEmail,
+      hasResendApiKey: Boolean(cfg.resendApiKey),
+      downloadLinks: cfg.downloadLinks,
+    };
+  }
+
+  function saveConfig(input = {}) {
+    if (input.provider !== undefined) vault.setSetting("email_provider", String(input.provider));
+    if (input.smtpHost !== undefined) vault.setSetting("smtp_host", String(input.smtpHost).trim());
+    if (input.smtpPort !== undefined) vault.setSetting("smtp_port", Number(input.smtpPort) || 465);
+    if (input.smtpSecure !== undefined) vault.setSetting("smtp_secure", Boolean(input.smtpSecure));
+    if (input.smtpUser !== undefined) vault.setSetting("smtp_user", String(input.smtpUser).trim());
+    if (input.smtpPass !== undefined && String(input.smtpPass).trim() !== "") {
+      vault.setSetting("smtp_pass", String(input.smtpPass), { isSecret: true });
+    }
+    if (input.fromName !== undefined) vault.setSetting("smtp_from_name", String(input.fromName).trim());
+    if (input.fromEmail !== undefined) vault.setSetting("smtp_from_email", String(input.fromEmail).trim());
+    if (input.resendApiKey !== undefined && String(input.resendApiKey).trim() !== "") {
+      vault.setSetting("resend_api_key", String(input.resendApiKey).trim(), { isSecret: true });
+    }
+    if (input.downloadLinks && typeof input.downloadLinks === "object") {
+      vault.setSetting("download_links", input.downloadLinks);
+    }
+    return getPublicConfig();
+  }
+
+  async function sendLicenseEmail(license) {
+    const cfg = getConfig();
+    const toEmail = String(license.customer_email || "").trim();
+    if (!toEmail) {
+      return { ok: false, status: "skipped", error: "E-mail do destinatário vazio." };
+    }
+    if (cfg.provider === "none") {
+      logNotification?.({
+        licenseId: license.id,
+        licenseKey: license.license_key,
+        channel: "email",
+        recipient: toEmail,
+        status: "skipped",
+        detail: "Envio de E-mail não configurado (provider=none).",
+      });
+      return { ok: false, status: "skipped", error: "Provedor de E-mail não configurado no painel." };
+    }
+
+    const msg = buildLicenseEmailPayload({
+      license,
+      downloadLinks: cfg.downloadLinks,
+      painelUrl: cfg.painelUrl,
+    });
+    const fromHeader = cfg.fromName ? `"${cfg.fromName}" <${cfg.fromEmail}>` : cfg.fromEmail;
+
+    try {
+      if (cfg.provider === "resend") {
+        if (!cfg.resendApiKey || !cfg.fromEmail) {
+          throw new Error("Configure a API Key da Resend e o e-mail remetente.");
+        }
+        const resp = await fetchImpl("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${cfg.resendApiKey}`,
+          },
+          body: JSON.stringify({
+            from: fromHeader,
+            to: [toEmail],
+            subject: msg.subject,
+            html: msg.html,
+            text: msg.text,
+          }),
+        });
+        if (!resp.ok) {
+          const errTxt = await resp.text();
+          throw new Error(`Resend HTTP ${resp.status}: ${errTxt.slice(0, 220)}`);
+        }
+      } else {
+        if (!cfg.smtpHost || !cfg.smtpUser || !cfg.smtpPass) {
+          throw new Error("Configure Host SMTP, Usuário e Senha nas configurações do painel.");
+        }
+        const createTransport = transportFactory || nodemailer.createTransport;
+        const transporter = createTransport({
+          host: cfg.smtpHost,
+          port: cfg.smtpPort,
+          secure: cfg.smtpSecure,
+          auth: {
+            user: cfg.smtpUser,
+            pass: cfg.smtpPass,
+          },
+        });
+        await transporter.sendMail({
+          from: fromHeader || cfg.smtpUser,
+          to: toEmail,
+          subject: msg.subject,
+          text: msg.text,
+          html: msg.html,
+        });
+      }
+
+      logNotification?.({
+        licenseId: license.id,
+        licenseKey: license.license_key,
+        channel: "email",
+        recipient: toEmail,
+        status: "sent",
+        detail: `E-mail enviado via ${cfg.provider.toUpperCase()}.`,
+      });
+      return { ok: true, status: "sent" };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logNotification?.({
+        licenseId: license.id,
+        licenseKey: license.license_key,
+        channel: "email",
+        recipient: toEmail,
+        status: "error",
+        detail: errorMsg,
+      });
+      return { ok: false, status: "error", error: errorMsg };
+    }
+  }
+
+  async function sendTestEmail(toEmail) {
+    return sendLicenseEmail({
+      id: "lic_test_email",
+      license_key: "CRIA-IND-TEST-0000-1234",
+      customer_email: toEmail,
+      customer_name: "Teste do Painel",
+      plan_tier: "individual",
+      max_servers: 2,
+      max_machines: 2,
+      upgrades: ["bonus"],
+    });
+  }
+
+  return {
+    getPublicConfig,
+    saveConfig,
+    sendLicenseEmail,
+    sendTestEmail,
+  };
+}
