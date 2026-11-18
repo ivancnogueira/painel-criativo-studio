@@ -24,12 +24,20 @@ Na pasta raiz do projeto (`/www/wwwroot/painel-criativo-studio/.env`), crie o ar
 
 > **Importante:** Nunca envie o arquivo `.env` nem a pasta `dados/` para o GitHub.
 
-### 3. Instalar Dependências e Iniciar
-No terminal da pasta do projeto na VPS:
+### 3. Instalar Dependências, Iniciar ou Atualizar Automático (`deploy.sh`)
+Na pasta do projeto na VPS (`/www/wwwroot/painel-criativo-studio`), você pode rodar diretamente o script automático de deploy (tanto na primeira instalação após criar o `.env`, quanto via **Webhook de Deploy Automático** do aaPanel):
 ```bash
-npm install --production
+curl -fsSL https://raw.githubusercontent.com/ivancnogueira/painel-criativo-studio/main/deploy.sh -o deploy.sh
+chmod +x deploy.sh
+./deploy.sh
 ```
-Depois clique em **Start** no Node Project Manager do aaPanel e ative o **SSL (Let's Encrypt)** com **Force HTTPS** em **Settings ➔ SSL**.
+> **Segurança:** O `deploy.sh` baixa o código mais recente da branch `main`, instala dependências com `--omit=dev`, **preserva intactos** o seu `.env` e a pasta `dados/` (banco SQLite) e tenta reiniciar automaticamente o projeto Node no aaPanel/PM2.
+
+Se preferir fazer manualmente na primeira vez:
+```bash
+npm install --omit=dev
+```
+Depois clique em **Start** (ou **Restart**) no Node Project Manager do aaPanel e ative o **SSL (Let's Encrypt)** com **Force HTTPS** em **Settings ➔ SSL**.
 
 ### 4. Acessar o Painel
 Acesse **`https://painel.criativoaistudio.com.br`**, entre com seu e-mail e senha configurados no `.env` e configure:
