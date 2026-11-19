@@ -32,7 +32,7 @@ export function createWhatsAppDispatcher({ vault, logNotification, fetchImpl = g
       provider: vault.getSetting("whatsapp_provider", process.env.WHATSAPP_PROVIDER || "none"), // "none" | "cloud_api"
       cloudPhoneNumberId: vault.getSetting("wa_cloud_phone_id", process.env.WA_CLOUD_PHONE_ID || ""),
       cloudAccessToken: vault.getSetting("wa_cloud_token", process.env.WA_CLOUD_TOKEN || ""),
-      cloudApiVersion: vault.getSetting("wa_cloud_version", process.env.WA_CLOUD_API_VERSION || "v21.0"),
+      cloudApiVersion: vault.getSetting("wa_cloud_version", process.env.WA_CLOUD_API_VERSION || "v27.0"),
       sendMode: vault.getSetting("wa_cloud_send_mode", "template"), // "template" | "text"
       templateName: vault.getSetting("wa_cloud_template_name", process.env.WA_CLOUD_TEMPLATE_NAME || "criativo_entrega_licenca"),
       templateLang: vault.getSetting("wa_cloud_template_lang", process.env.WA_CLOUD_TEMPLATE_LANG || "pt_BR"),
@@ -66,7 +66,7 @@ export function createWhatsAppDispatcher({ vault, logNotification, fetchImpl = g
       vault.setSetting("wa_cloud_token", String(input.cloudAccessToken).trim(), { isSecret: true });
     }
     if (input.cloudApiVersion !== undefined) {
-      vault.setSetting("wa_cloud_version", String(input.cloudApiVersion).trim() || "v21.0");
+      vault.setSetting("wa_cloud_version", String(input.cloudApiVersion).trim() || "v27.0");
     }
     if (input.sendMode !== undefined) {
       vault.setSetting("wa_cloud_send_mode", input.sendMode === "text" ? "text" : "template");

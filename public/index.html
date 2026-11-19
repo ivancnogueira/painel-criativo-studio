@@ -413,7 +413,7 @@
                       </button>
                       <button type="button" class="seg-btn" data-provider="cloud_api">
                         <strong>Meta Cloud API Oficial</strong>
-                        <small>Graph API v21.0</small>
+                        <small>Graph API v27.0</small>
                       </button>
                     </div>
                   </div>
@@ -429,7 +429,7 @@
                     <div class="grid-3">
                       <label class="field"><span>Phone Number ID</span><input type="text" id="wa-cloud-phone" placeholder="123456789012345" /></label>
                       <label class="field"><span>Access Token Meta <small id="status-cloud-key" class="status-dot"></small></span><input type="password" id="wa-cloud-token" placeholder="EAAG... (vazio mantém)" /></label>
-                      <label class="field"><span>Versão Graph API</span><input type="text" id="wa-cloud-version" value="v21.0" /></label>
+                      <label class="field"><span>Versão Graph API</span><input type="text" id="wa-cloud-version" value="v27.0" /></label>
                     </div>
 
                     <div class="grid-3">
@@ -490,22 +490,73 @@
                       </div>
                     </label>
                   </div>
+
+                  <label class="field">
+                    <span>Formato de Entrega</span>
+                    <div class="segmented-group" id="rel-mode-picker">
+                      <button type="button" class="seg-btn active" data-relmode="links">Instaladores / GitHub Release</button>
+                      <button type="button" class="seg-btn" data-relmode="hot_bundle">Hot-Bundle Instantâneo (JSON)</button>
+                    </div>
+                  </label>
+
                   <label class="field">
                     <span>Notas da Atualização (Changelog)</span>
                     <textarea id="rel-changelog" rows="3" placeholder="- Melhorias de performance e correções"></textarea>
                   </label>
-                  <label class="field">
-                    <span>Artefatos (JSON de arquivos + SHA-256)</span>
-                    <textarea id="rel-artifacts" rows="5" class="mono-input">[
-  {
-    "platform": "win32",
-    "arch": "x64",
-    "filename": "CriativoAIStudio-Setup-1.0.1.exe",
-    "sha256": "COLE_O_SHA256_AQUI",
-    "size_bytes": 95415395
-  }
-]</textarea>
-                  </label>
+
+                  <div id="rel-links-fields" class="form-stack">
+                    <div class="baileys-box">
+                      <div class="row-between mb-8">
+                        <strong>Importar direto do GitHub Release</strong>
+                        <small class="muted">Puxa tag, notas, links e SHA256SUMS.txt automaticamente</small>
+                      </div>
+                      <div class="grid-3">
+                        <label class="field"><span>Repositório GitHub</span><input type="text" id="rel-gh-repo" placeholder="owner/criativo-ai-studio-online" /></label>
+                        <label class="field"><span>Tag (opcional)</span><input type="text" id="rel-gh-tag" placeholder="v1.0.1 ou vazio = latest" /></label>
+                        <div class="field" style="justify-content:flex-end">
+                          <button type="button" class="btn btn-secondary" id="btn-import-github">Importar do GitHub</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="grid-2">
+                      <label class="field"><span>URL Windows (.exe)</span><input type="url" id="rel-win-url" placeholder="https://github.com/.../CriativoAIStudio-Setup-1.0.1.exe" /></label>
+                      <label class="field"><span>SHA-256 Windows</span><input type="text" id="rel-win-sha" class="mono-input" placeholder="64 caracteres hex" /></label>
+                    </div>
+                    <div class="grid-2">
+                      <label class="field"><span>URL macOS (.dmg)</span><input type="url" id="rel-mac-url" placeholder="https://github.com/.../CriativoAIStudio-1.0.1-universal.dmg" /></label>
+                      <label class="field"><span>SHA-256 macOS</span><input type="text" id="rel-mac-sha" class="mono-input" placeholder="64 caracteres hex" /></label>
+                    </div>
+                    <div class="grid-2">
+                      <label class="field"><span>URL Linux (.AppImage)</span><input type="url" id="rel-linux-url" placeholder="https://github.com/.../CriativoAIStudio-1.0.1.AppImage" /></label>
+                      <label class="field"><span>SHA-256 Linux</span><input type="text" id="rel-linux-sha" class="mono-input" placeholder="64 caracteres hex" /></label>
+                    </div>
+
+                    <details>
+                      <summary class="muted" style="cursor:pointer">JSON Avançado de Artefatos (opcional / sobrescreve se editado)</summary>
+                      <label class="field mt-8">
+                        <span>Artefatos (JSON de arquivos + SHA-256)</span>
+                        <textarea id="rel-artifacts" rows="5" class="mono-input"></textarea>
+                      </label>
+                    </details>
+                  </div>
+
+                  <div id="rel-hotbundle-fields" class="form-stack hidden">
+                    <div class="baileys-box">
+                      <div class="muted">
+                        Selecione o arquivo <code>criativo-update-*.json</code> gerado por <code>scripts/gerar-release-bundle.mjs</code> (ou cole o JSON abaixo). O Painel calcula o SHA-256 automático e libera para Windows, macOS, Linux e VPS sem precisar reinstalar o executável.
+                      </div>
+                    </div>
+                    <label class="field">
+                      <span>Carregar arquivo Hot-Bundle (.json)</span>
+                      <input type="file" id="rel-hotbundle-file" accept=".json,application/json" />
+                    </label>
+                    <label class="field">
+                      <span>Conteúdo JSON do Hot-Bundle</span>
+                      <textarea id="rel-hotbundle-json" rows="6" class="mono-input" placeholder='{"format":"criativo-update-bundle-v1","version":"1.0.1","files":[...]}'></textarea>
+                    </label>
+                  </div>
+
                   <button type="submit" class="btn btn-primary">Publicar Release no Feed</button>
                 </form>
 

@@ -34,6 +34,7 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
 
     const sentEmails = [];
     const sentWhatsApps = [];
+    const releasesDir = join(dir, "releases");
 
     const mockTransportFactory = () => ({
       sendMail: async (mail) => {
@@ -42,8 +43,37 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
       },
     });
 
-    const mockFetch = async (url, init) => {
-      sentWhatsApps.push({ url, body: JSON.parse(init.body) });
+    const mockFetch = async (url, init = {}) => {
+      const urlStr = String(url);
+      if (urlStr.startsWith("https://api.github.com/repos/criativo/demo/releases")) {
+        return new Response(
+          JSON.stringify({
+            tag_name: "v1.2.0",
+            prerelease: false,
+            body: "- Atualização automática importada",
+            assets: [
+              {
+                name: "CriativoAIStudio-Setup-1.2.0.exe",
+                size: 123456,
+                browser_download_url: "https://github.com/criativo/demo/releases/download/v1.2.0/CriativoAIStudio-Setup-1.2.0.exe",
+              },
+              {
+                name: "SHA256SUMS.txt",
+                size: 128,
+                browser_download_url: "https://github.com/criativo/demo/releases/download/v1.2.0/SHA256SUMS.txt",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (urlStr.endsWith("/SHA256SUMS.txt")) {
+        return new Response(
+          `${"a".repeat(64)}  CriativoAIStudio-Setup-1.2.0.exe\n`,
+          { status: 200, headers: { "Content-Type": "text/plain" } }
+        );
+      }
+      sentWhatsApps.push({ url: urlStr, body: JSON.parse(init.body) });
       return new Response(JSON.stringify({ messages: [{ id: "wamid.mock123" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -53,6 +83,7 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
     const { app, licenseHub } = createPainelApp({
       licenseHub: {
         dbPath: join(dir, "painel.db"),
+        releasesDir,
         privateKeyPem: keys.privateKeyPem,
         publicKeyPem: keys.publicKeyPem,
         adminEmail: "dono@criativo.test",
@@ -236,5 +267,93 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
     assert.equal(sentWhatsApps[0].body.to, "5511999887766");
     assert.equal(sentWhatsApps[0].body.type, "template");
     assert.equal(sentWhatsApps[0].body.template.name, "criativo_entrega_licenca");
+  });
+
+  it("Bloco 3 — Releases: preserva external_url, publica Hot-Bundle com SHA-256 automático e importa release do GitHub", async () => {
+    const { baseUrl } = await startTestServer();
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "dono@criativo.test", password: "SenhaForte!2026" }),
+    });
+    const cookie = loginRes.headers.get("set-cookie").split(";")[0];
+
+    // Cria licença ativa para consultar feed
+    const licRes = await fetch(`${baseUrl}/api/admin/licenses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        email: "update@criativo.test",
+        customer_name: "Cliente Update",
+        plan_tier: "individual",
+        send_email: false,
+      }),
+    });
+    const licJson = await licRes.json();
+    const licenseKey = licJson.license.license_key;
+
+    // 1) Importar release do GitHub (mockada) + SHA256SUMS.txt
+    const ghImport = await fetch(`${baseUrl}/api/admin/releases/import-github`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ repo: "criativo/demo" }),
+    });
+    assert.equal(ghImport.status, 200);
+    const ghJson = await ghImport.json();
+    assert.equal(ghJson.draft.version, "1.2.0");
+    assert.equal(ghJson.draft.artifacts[0].sha256, "a".repeat(64));
+    assert.match(ghJson.draft.artifacts[0].external_url, /^https:\/\/github\.com\/criativo\/demo\//);
+
+    // 2) Publicar release com external_url preservada e conferir redirecionamento 302
+    const pubExt = await fetch(`${baseUrl}/api/admin/releases`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        version: ghJson.draft.version,
+        channel: ghJson.draft.channel,
+        changelog_markdown: ghJson.draft.changelog_markdown,
+        artifacts: ghJson.draft.artifacts,
+      }),
+    });
+    assert.equal(pubExt.status, 201);
+    const redirRes = await fetch(
+      `${baseUrl}/api/releases/download/1.2.0/${ghJson.draft.artifacts[0].filename}`,
+      {
+        headers: { "X-Criativo-License-Key": licenseKey },
+        redirect: "manual",
+      }
+    );
+    assert.equal(redirRes.status, 302);
+    assert.equal(redirRes.headers.get("location"), ghJson.draft.artifacts[0].external_url);
+
+    // 3) Publicar Hot-Bundle JSON com cálculo automático de SHA-256 e entrega direta
+    const pubHot = await fetch(`${baseUrl}/api/admin/releases`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        version: "1.2.1",
+        channel: "stable",
+        changelog_markdown: "- Hot-bundle v1.2.1",
+        hot_bundle: {
+          format: "criativo-update-bundle-v1",
+          version: "1.2.1",
+          files: [{ path: "apps/web/dist/index.html", base64: Buffer.from("<html>ok</html>").toString("base64") }],
+        },
+      }),
+    });
+    assert.equal(pubHot.status, 201);
+    const hotData = await pubHot.json();
+    assert.equal(hotData.release.artifacts.length, 4);
+    assert.equal(hotData.release.artifacts[0].install_mode, "hot_bundle");
+    assert.match(hotData.release.artifacts[0].sha256, /^[a-f0-9]{64}$/);
+
+    const dlHot = await fetch(`${baseUrl}/api/releases/download/1.2.1/criativo-update-1.2.1.json`, {
+      headers: { "X-Criativo-License-Key": licenseKey },
+    });
+    assert.equal(dlHot.status, 200);
+    assert.equal(dlHot.headers.get("x-criativo-sha256"), hotData.release.artifacts[0].sha256);
+    const downloadedBundle = await dlHot.json();
+    assert.equal(downloadedBundle.version, "1.2.1");
   });
 });

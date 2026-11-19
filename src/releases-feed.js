@@ -35,24 +35,82 @@ function resolveInstallServerScript() {
   ].join("\n");
 }
 
+function sanitizeExternalHttpsUrl(rawUrl) {
+  if (typeof rawUrl !== "string") return undefined;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return undefined;
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizeArtifacts(rawArtifacts) {
   if (!Array.isArray(rawArtifacts)) return [];
   return rawArtifacts
     .filter((a) => a && typeof a.filename === "string" && typeof a.sha256 === "string")
-    .map((a) => ({
-      platform: a.platform || "vps-tarball",
-      arch: a.arch || "x64",
-      filename: path.basename(String(a.filename)),
-      sha256: String(a.sha256).trim().toLowerCase(),
-      size_bytes: Number(a.size_bytes) || 0,
-      download_path: a.download_path || "",
-    }));
+    .map((a) => {
+      const externalUrl = sanitizeExternalHttpsUrl(a.external_url);
+      const installMode =
+        a.install_mode === "hot_bundle" || a.install_mode === "native_installer"
+          ? a.install_mode
+          : undefined;
+      return {
+        platform: a.platform || "vps-tarball",
+        arch: a.arch || "x64",
+        filename: path.basename(String(a.filename)),
+        sha256: String(a.sha256).trim().toLowerCase(),
+        size_bytes: Number(a.size_bytes) || 0,
+        download_path: a.download_path || "",
+        ...(externalUrl ? { external_url: externalUrl } : {}),
+        ...(installMode ? { install_mode: installMode } : {}),
+      };
+    });
+}
+
+function inferPlatformFromAssetName(name) {
+  const lower = String(name || "").toLowerCase();
+  if (lower.endsWith(".exe") || lower.endsWith(".msi")) {
+    return { platform: "win32", arch: lower.includes("arm64") ? "arm64" : "x64", install_mode: "native_installer" };
+  }
+  if (lower.endsWith(".dmg") || (lower.endsWith(".zip") && (lower.includes("mac") || lower.includes("darwin")))) {
+    return {
+      platform: "darwin",
+      arch: lower.includes("universal") ? "universal" : lower.includes("arm64") ? "arm64" : "x64",
+      install_mode: "native_installer",
+    };
+  }
+  if (lower.endsWith(".appimage") || lower.endsWith(".deb")) {
+    return { platform: "linux", arch: lower.includes("arm64") ? "arm64" : "x64", install_mode: "native_installer" };
+  }
+  if (lower.endsWith(".json") && lower.includes("update")) {
+    return { platform: "vps-tarball", arch: "universal", install_mode: "hot_bundle" };
+  }
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
+    return { platform: "vps-tarball", arch: "x64", install_mode: "native_installer" };
+  }
+  return null;
+}
+
+function parseSha256SumsText(text) {
+  const map = new Map();
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = line.trim().match(/^([a-fA-F0-9]{64})\s+\*?(.+)$/);
+    if (m) {
+      map.set(path.basename(m[2].trim()), m[1].toLowerCase());
+    }
+  }
+  return map;
 }
 
 export function createReleasesFeedRouter(hubApi, options = {}) {
   const db = hubApi.db;
   ensureReleasesTables(db);
   const releasesDir = options.releasesDir || path.resolve(process.cwd(), "releases");
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
 
   function verifyActiveLicenseHeader(req, res) {
     const licenseKey = String(req.headers["x-criativo-license-key"] || req.query.license_key || "").trim();
@@ -92,14 +150,61 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
     return row;
   }
 
-  function publishRelease({ version, channel = "stable", changelog_markdown = "", min_compatible_version = null, artifacts = [] }) {
-    const cleanVer = String(version || "").trim().replace(/^v/i, "");
+  function publishRelease({ version, channel = "stable", changelog_markdown = "", min_compatible_version = null, artifacts = [], hot_bundle = null }) {
+    const cleanVer = String(version || "").trim().replace(/^v/i, "").replace(/[^a-zA-Z0-9._-]/g, "");
     if (!cleanVer) throw new Error("Versão da release é obrigatória.");
     const cleanChannel = channel === "beta" ? "beta" : "stable";
-    const normalized = normalizeArtifacts(artifacts).map((art) => ({
+
+    let mergedArtifacts = Array.isArray(artifacts) ? [...artifacts] : [];
+    if (hot_bundle) {
+      let bundleObj = hot_bundle;
+      if (typeof bundleObj === "string") {
+        bundleObj = JSON.parse(bundleObj);
+      }
+      if (!bundleObj || typeof bundleObj !== "object" || Array.isArray(bundleObj)) {
+        throw new Error("Hot-bundle inválido: informe um JSON válido de atualização.");
+      }
+      if (!bundleObj.version) {
+        bundleObj = { ...bundleObj, version: cleanVer };
+      }
+      const bundleFilename = `criativo-update-${cleanVer}.json`;
+      const verDir = path.resolve(releasesDir, cleanVer);
+      fs.mkdirSync(verDir, { recursive: true });
+      const bundlePath = path.resolve(verDir, bundleFilename);
+      const bundleText = JSON.stringify(bundleObj, null, 2);
+      const bundleBuf = Buffer.from(bundleText, "utf8");
+      fs.writeFileSync(bundlePath, bundleBuf);
+      const bundleSha = crypto.createHash("sha256").update(bundleBuf).digest("hex");
+
+      const hotEntries = [
+        { platform: "win32", arch: "x64" },
+        { platform: "darwin", arch: "universal" },
+        { platform: "linux", arch: "x64" },
+        { platform: "vps-tarball", arch: "x64" },
+      ].map((target) => ({
+        platform: target.platform,
+        arch: target.arch,
+        filename: bundleFilename,
+        sha256: bundleSha,
+        size_bytes: bundleBuf.length,
+        download_path: `/api/releases/download/${cleanVer}/${bundleFilename}`,
+        install_mode: "hot_bundle",
+      }));
+
+      const hotPlatforms = new Set(hotEntries.map((h) => h.platform));
+      mergedArtifacts = [
+        ...hotEntries,
+        ...mergedArtifacts.filter((a) => !hotPlatforms.has(a.platform)),
+      ];
+    }
+
+    const normalized = normalizeArtifacts(mergedArtifacts).map((art) => ({
       ...art,
       download_path: art.download_path || `/api/releases/download/${cleanVer}/${art.filename}`,
     }));
+    if (normalized.length === 0) {
+      throw new Error("Informe pelo menos um artefato válido com filename e sha256 (ou publique um Hot-Bundle JSON).");
+    }
     const publishedAt = new Date().toISOString();
 
     db.prepare(
@@ -220,6 +325,91 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
       return res.status(201).json({ ok: true, release: created });
     } catch (err) {
       return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  router.post("/admin/releases/import-github", hubApi.requireAdmin, async (req, res) => {
+    try {
+      const rawRepo = String(req.body?.repo || "")
+        .trim()
+        .replace(/^https?:\/\/github\.com\//i, "")
+        .replace(/\.git$/i, "")
+        .replace(/\/+$/, "");
+      if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(rawRepo)) {
+        return res.status(400).json({ error: "Informe o repositório no formato owner/repo ou URL do GitHub." });
+      }
+      const rawTag = String(req.body?.tag || "").trim();
+      const apiUrl = rawTag
+        ? `https://api.github.com/repos/${rawRepo}/releases/tags/${encodeURIComponent(rawTag)}`
+        : `https://api.github.com/repos/${rawRepo}/releases/latest`;
+
+      const ghRes = await fetchImpl(apiUrl, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "Criativo-AI-Studio-Painel/1.0",
+        },
+      });
+      if (!ghRes.ok) {
+        return res.status(ghRes.status === 404 ? 404 : 502).json({
+          error: `GitHub API retornou HTTP ${ghRes.status} ao consultar ${rawRepo}.`,
+        });
+      }
+      const ghData = await ghRes.json();
+      const version = String(ghData.tag_name || "").replace(/^v/i, "").trim();
+      const channel = ghData.prerelease ? "beta" : "stable";
+      const changelogMarkdown = String(ghData.body || "").trim();
+      const assets = Array.isArray(ghData.assets) ? ghData.assets : [];
+
+      const shaMap = new Map();
+      const checksumAsset = assets.find((a) =>
+        /^(sha256sums(\.txt)?|checksums(\.txt)?|.*\.sha256)$/i.test(String(a?.name || ""))
+      );
+      if (checksumAsset?.browser_download_url) {
+        try {
+          const sumRes = await fetchImpl(checksumAsset.browser_download_url, {
+            headers: { "User-Agent": "Criativo-AI-Studio-Painel/1.0" },
+          });
+          if (sumRes.ok) {
+            const sumText = await sumRes.text();
+            for (const [k, v] of parseSha256SumsText(sumText)) {
+              shaMap.set(k, v);
+            }
+          }
+        } catch {
+          // Segue sem mapa de checksums se o download auxiliar falhar
+        }
+      }
+
+      const artifacts = [];
+      for (const asset of assets) {
+        const inferred = inferPlatformFromAssetName(asset?.name);
+        if (!inferred) continue;
+        const cleanName = path.basename(String(asset.name));
+        const sha = shaMap.get(cleanName) || "";
+        artifacts.push({
+          platform: inferred.platform,
+          arch: inferred.arch,
+          filename: cleanName,
+          sha256: sha,
+          size_bytes: Number(asset.size) || 0,
+          external_url: sanitizeExternalHttpsUrl(asset.browser_download_url),
+          install_mode: inferred.install_mode,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        draft: {
+          version,
+          channel,
+          changelog_markdown: changelogMarkdown,
+          artifacts,
+          tag_name: ghData.tag_name || null,
+          html_url: ghData.html_url || null,
+        },
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 

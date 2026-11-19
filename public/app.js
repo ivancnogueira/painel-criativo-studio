@@ -8,6 +8,7 @@ let state = {
   waProvider: "none",
   waSendMode: "template",
   relChannel: "stable",
+  relMode: "links",
   lastCreatedLicense: null,
 };
 
@@ -124,6 +125,11 @@ bindSegmentedPicker("plan-picker", "plan", (val) => (state.selectedPlan = val));
 bindSegmentedPicker("sim-provider-picker", "provider", (val) => (state.simProvider = val));
 bindSegmentedPicker("sim-event-picker", "event", (val) => (state.simEvent = val));
 bindSegmentedPicker("rel-channel-picker", "channel", (val) => (state.relChannel = val));
+bindSegmentedPicker("rel-mode-picker", "relmode", (val) => {
+  state.relMode = val;
+  $("rel-links-fields").classList.toggle("hidden", val !== "links");
+  $("rel-hotbundle-fields").classList.toggle("hidden", val !== "hot_bundle");
+});
 bindSegmentedPicker("email-provider-picker", "provider", (val) => {
   state.emailProvider = val;
   $("smtp-fields").classList.toggle("hidden", val !== "smtp");
@@ -476,7 +482,7 @@ async function loadMessagingConfig() {
 
   $("wa-cloud-phone").value = wa.cloudPhoneNumberId || "";
   $("status-cloud-key").classList.toggle("ok", wa.hasCloudAccessToken);
-  $("wa-cloud-version").value = wa.cloudApiVersion || "v21.0";
+  $("wa-cloud-version").value = wa.cloudApiVersion || "v27.0";
   $("wa-template-name").value = wa.templateName || "criativo_entrega_licenca";
   $("wa-template-lang").value = wa.templateLang || "pt_BR";
   $("wa-template").value = wa.messageTemplate || "";
@@ -592,6 +598,111 @@ async function loadNotificationLogs() {
 $("btn-refresh-logs").addEventListener("click", () => void loadNotificationLogs());
 
 // ─── Releases & Senha ──────────────────────────────────────────────────────
+function inferFilenameFromUrl(url, fallback) {
+  try {
+    const pathname = new URL(url).pathname;
+    const base = pathname.split("/").filter(Boolean).pop();
+    return base || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildFriendlyArtifactsList(version) {
+  const ver = version || "1.0.1";
+  const rows = [];
+  const winUrl = $("rel-win-url").value.trim();
+  const winSha = $("rel-win-sha").value.trim();
+  if (winUrl || winSha) {
+    rows.push({
+      platform: "win32",
+      arch: "x64",
+      filename: inferFilenameFromUrl(winUrl, `CriativoAIStudio-Setup-${ver}.exe`),
+      sha256: winSha,
+      external_url: winUrl || undefined,
+      install_mode: "native_installer",
+    });
+  }
+  const macUrl = $("rel-mac-url").value.trim();
+  const macSha = $("rel-mac-sha").value.trim();
+  if (macUrl || macSha) {
+    rows.push({
+      platform: "darwin",
+      arch: "universal",
+      filename: inferFilenameFromUrl(macUrl, `CriativoAIStudio-${ver}-universal.dmg`),
+      sha256: macSha,
+      external_url: macUrl || undefined,
+      install_mode: "native_installer",
+    });
+  }
+  const linuxUrl = $("rel-linux-url").value.trim();
+  const linuxSha = $("rel-linux-sha").value.trim();
+  if (linuxUrl || linuxSha) {
+    rows.push({
+      platform: "linux",
+      arch: "x64",
+      filename: inferFilenameFromUrl(linuxUrl, `CriativoAIStudio-${ver}.AppImage`),
+      sha256: linuxSha,
+      external_url: linuxUrl || undefined,
+      install_mode: "native_installer",
+    });
+  }
+  return rows;
+}
+
+$("rel-hotbundle-file").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const text = await file.text();
+  $("rel-hotbundle-json").value = text;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.version && !$("rel-version").value.trim()) {
+      $("rel-version").value = parsed.version;
+    }
+    if (parsed.changelog_markdown && !$("rel-changelog").value.trim()) {
+      $("rel-changelog").value = parsed.changelog_markdown;
+    }
+    showToast(`Bundle ${file.name} carregado (${parsed.files?.length || 0} arquivos).`);
+  } catch {
+    showToast("Arquivo selecionado não é um JSON válido.");
+  }
+});
+
+$("btn-import-github").addEventListener("click", async () => {
+  const repo = $("rel-gh-repo").value.trim();
+  const tag = $("rel-gh-tag").value.trim();
+  if (!repo) return showToast("Informe o repositório GitHub (ex: owner/repo).");
+  try {
+    const res = await api("/api/admin/releases/import-github", {
+      method: "POST",
+      body: JSON.stringify({ repo, tag }),
+    });
+    const draft = res.draft;
+    if (draft.version) $("rel-version").value = draft.version;
+    if (draft.changelog_markdown) $("rel-changelog").value = draft.changelog_markdown;
+    if (draft.channel === "beta" || draft.channel === "stable") {
+      state.relChannel = draft.channel;
+      document
+        .querySelectorAll("#rel-channel-picker .seg-btn")
+        .forEach((b) => b.classList.toggle("active", b.dataset.channel === draft.channel));
+    }
+    const winArt = (draft.artifacts || []).find((a) => a.platform === "win32");
+    const macArt = (draft.artifacts || []).find((a) => a.platform === "darwin");
+    const linuxArt = (draft.artifacts || []).find((a) => a.platform === "linux");
+    $("rel-win-url").value = winArt?.external_url || "";
+    $("rel-win-sha").value = winArt?.sha256 || "";
+    $("rel-mac-url").value = macArt?.external_url || "";
+    $("rel-mac-sha").value = macArt?.sha256 || "";
+    $("rel-linux-url").value = linuxArt?.external_url || "";
+    $("rel-linux-sha").value = linuxArt?.sha256 || "";
+    $("rel-artifacts").value = JSON.stringify(draft.artifacts || [], null, 2);
+    showToast(`Release ${draft.version} importada do GitHub (${draft.artifacts?.length || 0} artefatos).`);
+  } catch (err) {
+    showToast(`GitHub: ${err.message}`);
+  }
+});
+
 async function loadReleases() {
   const data = await api("/api/admin/releases");
   const list = $("releases-list");
@@ -600,32 +711,51 @@ async function loadReleases() {
     return;
   }
   list.innerHTML = data.releases
-    .map(
-      (r) => `
+    .map((r) => {
+      const arts = r.artifacts || [];
+      const hasHot = arts.some((a) => a.install_mode === "hot_bundle");
+      const plats = Array.from(new Set(arts.map((a) => a.platform))).join(", ");
+      return `
       <div class="history-item">
         <div class="row-between">
           <strong>v${escapeHtml(r.version)}</strong>
-          <span class="pill pill-active">${escapeHtml(r.channel)}</span>
+          <div>
+            <span class="pill ${hasHot ? "pill-active" : "pill-warn"}">${hasHot ? "Hot-Bundle" : "Instalador"}</span>
+            <span class="pill pill-active">${escapeHtml(r.channel)}</span>
+          </div>
         </div>
         <div class="muted">${escapeHtml(r.changelog_markdown || "Sem notas")}</div>
-        <div class="muted">${r.artifacts?.length || 0} artefato(s) · ${new Date(r.published_at).toLocaleString("pt-BR")}</div>
-      </div>`,
-    )
+        <div class="muted">${arts.length} artefato(s) [${escapeHtml(plats || "nenhum")}] · ${new Date(r.published_at).toLocaleString("pt-BR")}</div>
+      </div>`;
+    })
     .join("");
 }
 
 $("release-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
-    const artifacts = JSON.parse($("rel-artifacts").value || "[]");
+    const version = $("rel-version").value.trim();
+    const changelog = $("rel-changelog").value;
+    const payload = {
+      version,
+      channel: state.relChannel,
+      changelog_markdown: changelog,
+    };
+
+    if (state.relMode === "hot_bundle") {
+      const rawHot = $("rel-hotbundle-json").value.trim();
+      if (!rawHot) throw new Error("Selecione ou cole o JSON do Hot-Bundle.");
+      payload.hot_bundle = JSON.parse(rawHot);
+    } else {
+      const friendly = buildFriendlyArtifactsList(version);
+      const rawJson = $("rel-artifacts").value.trim();
+      const parsedJson = rawJson ? JSON.parse(rawJson) : [];
+      payload.artifacts = friendly.length > 0 ? friendly : parsedJson;
+    }
+
     await api("/api/admin/releases", {
       method: "POST",
-      body: JSON.stringify({
-        version: $("rel-version").value.trim(),
-        channel: state.relChannel,
-        changelog_markdown: $("rel-changelog").value,
-        artifacts,
-      }),
+      body: JSON.stringify(payload),
     });
     showToast("Release publicada no feed!");
     await loadReleases();
