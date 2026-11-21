@@ -30,33 +30,37 @@ export function createServerClaimsRouter(hubApi) {
   }
 
   function validateLicenseHeaders(req, res) {
-    const licenseKey = String(req.headers["x-criativo-license-key"] || "").trim();
-    const machineId = String(req.headers["x-criativo-machine-id"] || "").trim();
+    const licenseKey = String(
+      req.headers["x-criativo-license-key"] || req.headers["x-license-key"] || "",
+    ).trim();
+    const machineId = String(
+      req.headers["x-criativo-machine-id"] || req.headers["x-machine-id"] || "",
+    ).trim();
     if (!licenseKey || !machineId) {
-      res.status(401).json({ error: "missing_license_headers" });
+      res.status(401).json({ error: "missing_license_headers", message: "Cabeçalhos de licença ausentes." });
       return null;
     }
     const row = hubApi.findLicenseByKey(licenseKey);
     if (!row || row.status !== "active") {
-      res.status(403).json({ error: "invalid_or_inactive_license" });
+      res.status(403).json({ error: "invalid_or_inactive_license", message: "Licença inválida ou inativa." });
       return null;
     }
     const devices = hubApi.listActiveDevices(row.id, machineId);
     const activeHere = devices.some((d) => d.machine_id === machineId);
     if (!activeHere) {
-      res.status(403).json({ error: "unlinked_machine" });
+      res.status(403).json({ error: "unlinked_machine", message: "Dispositivo não vinculado à licença." });
       return null;
     }
     return { row, licenseKey, machineId };
   }
 
-  router.post("/servers/claims", (req, res) => {
+  function handleCreateClaim(req, res) {
     const auth = validateLicenseHeaders(req, res);
     if (!auth) return;
 
     const serverName = String(req.body?.server_name || "").trim() || "Servidor VPS";
     const claimId = `clm_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-    const claimToken = `CRIATIVO_CLAIM_${crypto.randomBytes(18).toString("base64url")}`;
+    const claimToken = `CRV_${crypto.randomBytes(16).toString("hex")}`;
     const tokenHash = hashToken(claimToken);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + CLAIM_TTL_SECONDS * 1000).toISOString();
@@ -68,26 +72,36 @@ export function createServerClaimsRouter(hubApi) {
     ).run(claimId, tokenHash, auth.licenseKey, auth.machineId, serverName, expiresAt, now.toISOString());
 
     const baseHubUrl = (process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br").replace(/\/+$/, "");
-    const bashCmd = `curl -fsSL ${baseHubUrl}/api/releases/install-server.sh | CRIATIVO_CLAIM="${claimToken}" CRIATIVO_CLAIM_HUB="${baseHubUrl}" bash`;
+    const safeName = serverName.replace(/[^a-zA-Z0-9 _.-]/g, "").trim() || "Servidor VPS";
+    const bashCmd = `{ echo CRIATIVO_CLAIM=${claimToken}; curl -fsSL ${baseHubUrl}/api/releases/install-server.sh; } | sudo bash -s -- --name "${safeName}" --hub-url "${baseHubUrl}"`;
 
     return res.status(201).json({
+      ok: true,
       claim_id: claimId,
       server_name: serverName,
       claim_token: claimToken,
+      claim_secret: claimToken,
       command_bash: bashCmd,
       expires_at: expiresAt,
       ttl_seconds: CLAIM_TTL_SECONDS,
       status: "pending",
     });
-  });
+  }
 
-  router.post("/servers/claims/redeem", (req, res) => {
-    const { claim_token, base_url, access_token, remote_ip = null, version = "1.0.0" } = req.body || {};
-    if (!claim_token || !base_url || !access_token) {
+  function handleRedeemClaim(req, res) {
+    const body = req.body || {};
+    const claimToken = String(body.claim_secret || body.claim_token || "").trim();
+    const baseUrl = String(body.host_url || body.base_url || "").trim();
+    const accessToken = String(body.server_api_token || body.access_token || "").trim();
+    const remoteIp = body.public_ip || body.remote_ip || null;
+    const version = String(body.app_version || body.version || "1.0.0").trim();
+    const incomingServerName = String(body.server_name || "").trim();
+
+    if (!claimToken || !baseUrl || !accessToken) {
       return res.status(400).json({ error: "missing_fields" });
     }
 
-    const tokenHash = hashToken(claim_token);
+    const tokenHash = hashToken(claimToken);
     const row = db.prepare(`SELECT * FROM server_claims WHERE claim_token_hash = ?;`).get(tokenHash);
     if (!row) return res.status(404).json({ error: "claim_not_found" });
     if (row.status === "redeemed") return res.status(409).json({ error: "claim_already_redeemed" });
@@ -96,22 +110,29 @@ export function createServerClaimsRouter(hubApi) {
       return res.status(410).json({ error: "claim_expired" });
     }
 
+    const finalServerName = incomingServerName || row.server_name || "Servidor VPS";
     const nowIso = new Date().toISOString();
     db.prepare(
       `UPDATE server_claims
-       SET status = 'redeemed', paired_base_url = ?, paired_access_token = ?, paired_remote_ip = ?, paired_version = ?, redeemed_at = ?
+       SET status = 'redeemed',
+           server_name = ?,
+           paired_base_url = ?,
+           paired_access_token = ?,
+           paired_remote_ip = ?,
+           paired_version = ?,
+           redeemed_at = ?
        WHERE claim_id = ?;`,
-    ).run(String(base_url).trim(), String(access_token).trim(), remote_ip, version, nowIso, row.claim_id);
+    ).run(finalServerName, baseUrl, accessToken, remoteIp, version, nowIso, row.claim_id);
 
     return res.json({
       ok: true,
       claim_id: row.claim_id,
-      server_name: row.server_name,
+      server_name: finalServerName,
       status: "redeemed",
     });
-  });
+  }
 
-  router.get("/servers/claims/:claimId", (req, res) => {
+  function handleGetClaimStatus(req, res) {
     const auth = validateLicenseHeaders(req, res);
     if (!auth) return;
 
@@ -141,6 +162,16 @@ export function createServerClaimsRouter(hubApi) {
               version: row.paired_version,
             }
           : null,
+      paired_info:
+        status === "redeemed"
+          ? {
+              server_name: row.server_name,
+              host_url: row.paired_base_url,
+              public_ip: row.paired_remote_ip,
+              server_api_token: row.paired_access_token,
+              app_version: row.paired_version,
+            }
+          : null,
     };
 
     if (status === "redeemed" && row.paired_access_token) {
@@ -148,7 +179,16 @@ export function createServerClaimsRouter(hubApi) {
     }
 
     return res.json(payload);
-  });
+  }
+
+  router.post("/servers/claims", handleCreateClaim);
+  router.post("/server-claims/create", handleCreateClaim);
+
+  router.post("/servers/claims/redeem", handleRedeemClaim);
+  router.post("/server-claims/redeem", handleRedeemClaim);
+
+  router.get("/servers/claims/:claimId", handleGetClaimStatus);
+  router.get("/server-claims/:claimId/status", handleGetClaimStatus);
 
   return router;
 }

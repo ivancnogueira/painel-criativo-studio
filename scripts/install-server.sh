@@ -167,13 +167,21 @@ if [[ -n "$CLAIM_SECRET" ]]; then
   REDEEM_JSON="$(printf '{"claim_secret":"%s","claim_token":"%s","server_name":"%s","host_url":"%s","base_url":"%s","public_ip":"%s","remote_ip":"%s","server_port":%s,"server_api_token":"%s","access_token":"%s","vps_machine_id":"%s"}' \
     "$CLAIM_SECRET" "$CLAIM_SECRET" "$SERVER_NAME" "$HOST_URL" "$HOST_URL" "$PUBLIC_IP" "$PUBLIC_IP" "$SERVER_PORT" "$ACCESS_TOKEN" "$ACCESS_TOKEN" "$VPS_MACHINE_ID")"
 
-  curl -fsS -X POST "${HUB_URL%/}/api/server-claims/redeem" \
+  if curl -fsS -X POST "${HUB_URL%/}/api/server-claims/redeem" \
     -H "Content-Type: application/json" \
     -d "$REDEEM_JSON" >/dev/null 2>&1 \
     || curl -fsS -X POST "${HUB_URL%/}/api/servers/claims/redeem" \
       -H "Content-Type: application/json" \
-      -d "$REDEEM_JSON" >/dev/null
-  echo "Criativo AI Studio conectado à sua conta com sucesso."
+      -d "$REDEEM_JSON" >/dev/null 2>&1; then
+    echo "Criativo AI Studio conectado à sua conta com sucesso."
+    echo "Endpoint da VPS: $HOST_URL"
+  else
+    echo ""
+    echo "Aviso: Serviço Criativo AI Studio instalado e ativo em $HOST_URL, mas o pareamento automático pelo CRIATIVO_CLAIM não pôde ser concluído (token expirado ou emitido em cache local)."
+    echo "Para conectar manualmente no app Desktop ('Entrar em um servidor' -> 'Conexão direta'):"
+    echo "  URL do servidor: $HOST_URL"
+    echo "  Token de acesso: $ACCESS_TOKEN"
+  fi
 else
-  echo "Instalação concluída. Nenhum CRIATIVO_CLAIM informado."
+  echo "Instalação concluída. Serviço ativo na porta $SERVER_PORT (nenhum CRIATIVO_CLAIM informado)."
 fi
