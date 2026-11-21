@@ -7,7 +7,8 @@ set -euo pipefail
 
 HUB_URL="${CRIATIVO_HUB_URL:-https://[SEU_DOMINIO_HUB]}"
 SERVER_NAME="${CRIATIVO_SERVER_NAME:-Servidor VPS}"
-SERVER_PORT="${CRIATIVO_SERVER_PORT:-3000}"
+SERVER_PORT="${CRIATIVO_SERVER_PORT:-3777}"
+EXPLICIT_PORT="false"
 CUSTOM_DOMAIN=""
 CLAIM_SECRET="${CRIATIVO_CLAIM:-}"
 unset CRIATIVO_CLAIM || true
@@ -26,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --name) SERVER_NAME="${2:-$SERVER_NAME}"; shift 2 ;;
     --hub-url) HUB_URL="${2:-$HUB_URL}"; shift 2 ;;
-    --port) SERVER_PORT="${2:-$SERVER_PORT}"; shift 2 ;;
+    --port) SERVER_PORT="${2:-$SERVER_PORT}"; EXPLICIT_PORT="true"; shift 2 ;;
     --domain) CUSTOM_DOMAIN="${2:-}"; shift 2 ;;
     *) shift ;;
   esac
@@ -47,6 +48,16 @@ safe_apt_update() {
   apt-get -o Acquire::AllowReleaseInfoChange=true -o Acquire::AllowReleaseInfoChange::Label=true update -y >/dev/null 2>&1 \
     || apt-get --allow-releaseinfo-change update -y >/dev/null 2>&1 \
     || true
+}
+
+is_port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -tln 2>/dev/null | grep -qE "[:.]${port}[[:space:]]" && return 0
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+  fi
+  return 1
 }
 
 echo "==> [1/5] Verificando dependências base e Node.js 22..."
@@ -102,12 +113,40 @@ fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$DATA_DIR" /run/criativo
 su -s /bin/bash "$APP_USER" -c "cd '$APP_DIR' && npm install --include=dev --no-audit --no-fund && npm run build && npm run build --workspace=apps/web && node scripts/configurar-local.mjs --sem-build"
 
-echo "==> [3/5] Configurando Cofre e Token de Acesso Seguro..."
+echo "==> [3/5] Selecionando porta exclusiva, Cofre e Token de Acesso Seguro..."
+systemctl stop criativo.service >/dev/null 2>&1 || true
+
+if [[ "$EXPLICIT_PORT" != "true" ]] && is_port_in_use "$SERVER_PORT"; then
+  FOUND_FREE_PORT=""
+  for CANDIDATE_PORT in $(seq 3777 3799); do
+    if ! is_port_in_use "$CANDIDATE_PORT"; then
+      FOUND_FREE_PORT="$CANDIDATE_PORT"
+      break
+    fi
+  done
+  if [[ -n "$FOUND_FREE_PORT" ]]; then
+    echo "    -> Porta $SERVER_PORT já está em uso na VPS; selecionada porta livre $FOUND_FREE_PORT."
+    SERVER_PORT="$FOUND_FREE_PORT"
+  fi
+fi
+
 MASTER_KEY="$(openssl rand -hex 32)"
 ACCESS_TOKEN="$(openssl rand -hex 32)"
 if [[ -f "$ENV_FILE" ]]; then
-  # Preserva cofre existente se reinstalação
+  # Preserva cofre existente se reinstalação, mas atualiza PORT e Hub URL
   grep -q "^CRIATIVO_SERVER_ACCESS_TOKEN=" "$ENV_FILE" && ACCESS_TOKEN="$(grep '^CRIATIVO_SERVER_ACCESS_TOKEN=' "$ENV_FILE" | cut -d= -f2-)" || echo "CRIATIVO_SERVER_ACCESS_TOKEN=$ACCESS_TOKEN" >> "$ENV_FILE"
+  if grep -q "^PORT=" "$ENV_FILE"; then
+    sed -i "s/^PORT=.*/PORT=$SERVER_PORT/" "$ENV_FILE"
+  else
+    echo "PORT=$SERVER_PORT" >> "$ENV_FILE"
+  fi
+  if grep -q "^CRIATIVO_LICENSE_HUB_URL=" "$ENV_FILE"; then
+    sed -i "s|^CRIATIVO_LICENSE_HUB_URL=.*|CRIATIVO_LICENSE_HUB_URL=$HUB_URL|" "$ENV_FILE"
+  else
+    echo "CRIATIVO_LICENSE_HUB_URL=$HUB_URL" >> "$ENV_FILE"
+  fi
+  chmod 600 "$ENV_FILE"
+  chown "$APP_USER:$APP_USER" "$ENV_FILE"
 else
   cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
@@ -119,12 +158,13 @@ CRIATIVO_SOCKET_PATH=/run/criativo/control.sock
 CRIATIVO_VAULT_KEY=$MASTER_KEY
 CRIATIVO_SERVER_ACCESS_TOKEN=$ACCESS_TOKEN
 CRIATIVO_LICENSE_HUB_URL=$HUB_URL
+CRIATIVO_ISOLATED_SERVER=1
 EOF
   chmod 600 "$ENV_FILE"
   chown "$APP_USER:$APP_USER" "$ENV_FILE"
 fi
 
-echo "==> [4/5] Registrando serviço systemd (criativo.service)..."
+echo "==> [4/5] Registrando serviço systemd (criativo.service) na porta ${SERVER_PORT}..."
 cat > /etc/systemd/system/criativo.service <<EOF
 [Unit]
 Description=Criativo AI Studio Online Daemon
@@ -144,16 +184,28 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw allow "${SERVER_PORT}/tcp" >/dev/null 2>&1 || true
+fi
+
 systemctl daemon-reload
 systemctl enable criativo.service
 systemctl restart criativo.service
 
-for _ in $(seq 1 20); do
-  if curl -fsS "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1; then
+DAEMON_HEALTHY="false"
+for _ in $(seq 1 25); do
+  if curl -fsS "http://127.0.0.1:${SERVER_PORT}/health" 2>/dev/null | grep -q '"criativo-daemon"'; then
+    DAEMON_HEALTHY="true"
     break
   fi
   sleep 1
 done
+
+if [[ "$DAEMON_HEALTHY" != "true" ]]; then
+  echo "Erro: criativo.service não respondeu na porta ${SERVER_PORT}." >&2
+  journalctl -u criativo.service --no-pager -n 25 >&2 || true
+  exit 1
+fi
 
 echo "==> [5/5] Pareando servidor à sua conta..."
 if [[ -n "$CLAIM_SECRET" ]]; then
