@@ -1,0 +1,176 @@
+:root,
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #0b0c0f;
+  --bg-sidebar: #0e1014;
+  --bg-surface: #15171c;
+  --bg-surface-2: #1c1f26;
+  --bg-surface-3: #232730;
+  --bg-topbar: rgba(11, 12, 15, 0.84);
+  --bg-backdrop: rgba(6, 7, 10, 0.72);
+
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --text-primary: #f4f5f7;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+
+  --accent-orange: #ff6b00;
+  --accent-orange-hover: #ff7f24;
+  --accent-orange-soft: rgba(255, 107, 0, 0.14);
+  --hero-gradient: linear-gradient(135deg, #ff5e14 0%, #ff7a29 52%, #e84400 100%);
+
+  --accent-lime: #b6f342;
+  --accent-lime-soft: rgba(182, 243, 66, 0.14);
+  --accent-emerald: #10b981;
+  --accent-emerald-soft: rgba(16, 185, 129, 0.14);
+  --accent-success: #31cf76;
+  --accent-success-soft: rgba(49, 207, 118, 0.14);
+  --accent-danger: #ff5a65;
+  --accent-danger-soft: rgba(255, 90, 101, 0.14);
+  --accent-warn: #f59e0b;
+  --accent-warn-soft: rgba(245, 158, 11, 0.14);
+  --accent-sky: #38bdf8;
+  --accent-sky-soft: rgba(56, 189, 248, 0.14);
+
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-bar-idle: #2a2e38;
+  --chart-bar-idle-end: #191b22;
+  --chart-tooltip-bg: #1c1f26;
+  --chart-tooltip-text: #f4f5f7;
+  --code-bg: #0b0d12;
+
+  --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-modal: 0 28px 70px rgba(0, 0, 0, 0.72);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg-canvas: #f4f6fa;
+  --bg-sidebar: #ffffff;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #f8fafc;
+  --bg-surface-3: #eef2f7;
+  --bg-topbar: rgba(244, 246, 250, 0.88);
+  --bg-backdrop: rgba(15, 23, 42, 0.45);
+
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.16);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  --accent-orange: #ea580c;
+  --accent-orange-hover: #c2410c;
+  --accent-orange-soft: rgba(234, 88, 12, 0.11);
+  --hero-gradient: linear-gradient(135deg, #ff5e14 0%, #ff7a29 52%, #e84400 100%);
+
+  --accent-lime: #65a30d;
+  --accent-lime-soft: rgba(101, 163, 13, 0.12);
+  --accent-emerald: #059669;
+  --accent-emerald-soft: rgba(5, 150, 105, 0.12);
+  --accent-success: #16a34a;
+  --accent-success-soft: rgba(22, 163, 74, 0.12);
+  --accent-danger: #dc2626;
+  --accent-danger-soft: rgba(220, 38, 38, 0.11);
+  --accent-warn: #d97706;
+  --accent-warn-soft: rgba(217, 119, 6, 0.12);
+  --accent-sky: #0284c7;
+  --accent-sky-soft: rgba(2, 132, 199, 0.12);
+
+  --chart-grid: rgba(15, 23, 42, 0.08);
+  --chart-bar-idle: #cbd5e1;
+  --chart-bar-idle-end: #e2e8f0;
+  --chart-tooltip-bg: #0f172a;
+  --chart-tooltip-text: #f8fafc;
+  --code-bg: #f1f5f9;
+
+  --shadow-card: 0 6px 20px rgba(15, 23, 42, 0.06);
+  --shadow-modal: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+:root {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, monospace;
+  --sidebar-w: 248px;
+  --rail-w: 310px;
+  --topbar-h: 64px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+}
+
+/* View Transitions API — Expansão Circular de Tema */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html[data-theme-vt="active"]::view-transition-group(root) {
+  animation-duration: var(--theme-vt-duration, 400ms);
+}
+
+html[data-theme-vt="active"]::view-transition-new(root) {
+  clip-path: var(--theme-vt-clip-from);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  margin: 2px 0 0;
+}
+
+.mt-8 {
+  margin-top: 8px;
+}
+
+.mt-12 {
+  margin-top: 12px;
+}
+
+.mt-16 {
+  margin-top: 16px;
+}
+
+.mb-8 {
+  margin-bottom: 8px;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}

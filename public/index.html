@@ -1,33 +1,65 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
-    <meta name="theme-color" content="#0D0D0D" />
+    <meta name="theme-color" content="#0b0c0f" />
     <link rel="icon" type="image/png" href="/logo-criativo.png" />
-    <title>Painel Central de Licenças · Criativo AI Studio</title>
+    <title>Painel Central · Criativo AI Studio</title>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("criativo_painel_theme");
+          var theme = saved === "light" || saved === "dark" ? saved : "dark";
+          var root = document.documentElement;
+          root.dataset.theme = theme;
+          root.classList.remove("dark", "light");
+          root.classList.add(theme);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", theme === "light" ? "#f4f6fa" : "#0b0c0f");
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles/tokens.css" />
+    <link rel="stylesheet" href="/styles/shell.css" />
+    <link rel="stylesheet" href="/styles/components.css" />
   </head>
   <body>
     <div id="app">
       <!-- Tela de Login -->
       <section id="login-view" class="login-shell hidden">
+        <button
+          type="button"
+          id="btn-login-theme"
+          class="theme-toggle-btn login-theme-float"
+          aria-label="Alternar tema claro/escuro"
+          title="Alternar tema claro/escuro"
+        >
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+
         <div class="login-card">
           <div class="brand-row">
             <div class="logo-box">
               <img src="/logo-criativo.png" alt="Criativo AI Studio" />
             </div>
             <div>
-              <span class="badge-pill">Painel Privado · Hub Central</span>
+              <span class="badge-pill">Hub Central Ed25519</span>
               <h1>Criativo AI Studio</h1>
-              <p class="muted">Acesse com seu e-mail e senha de administrador para emitir licenças, acompanhar checkouts e gerenciar disparos.</p>
+              <p class="muted">Acesse o painel executivo para gerenciar licenças, faturamento, webhooks e entregas automáticas.</p>
             </div>
           </div>
 
@@ -36,7 +68,7 @@
           <form id="login-form" class="form-stack">
             <label class="field">
               <span>E-mail de administrador</span>
-              <input id="login-email" type="email" required autocomplete="username" placeholder="admin@criativoaistudio.com.br" />
+              <input id="login-email" type="email" required autocomplete="username" placeholder="admin@exemplo.invalid" />
             </label>
             <label class="field">
               <span>Senha</span>
@@ -49,551 +81,123 @@
         </div>
       </section>
 
-      <!-- Shell Administrativo Autenticado -->
-      <div id="admin-view" class="admin-shell hidden">
-        <header class="topbar">
-          <div class="topbar-brand">
-            <img src="/logo-criativo.png" alt="Criativo AI Studio" class="topbar-logo" />
+      <!-- Shell SaaS 3 Zonas (Sem Abas) -->
+      <div id="admin-view" class="app-shell hidden">
+        <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
+
+        <!-- Zona 1: Sidebar Esquerda -->
+        <aside id="sidebar" class="sidebar" aria-label="Navegação principal">
+          <div class="sidebar-brand">
+            <img src="/logo-criativo.png" alt="Criativo AI Studio" class="sidebar-logo" />
             <div>
-              <div class="topbar-title">Painel Central · Criativo AI Studio</div>
-              <div class="topbar-sub">Licenças Ed25519 · Webhooks de Checkout · E-mail &amp; WhatsApp Automático</div>
+              <div class="sidebar-title">Criativo Studio</div>
+              <span class="sidebar-version">Hub v1.0.1</span>
             </div>
           </div>
-          <div class="topbar-actions">
-            <span id="admin-user-email" class="user-pill"></span>
-            <button id="btn-logout" class="btn btn-ghost">Sair</button>
+
+          <button type="button" id="btn-sidebar-search" class="sidebar-search-trigger">
+            <span>🔍 Buscar no painel...</span>
+            <span class="kbd-pill">Ctrl K</span>
+          </button>
+
+          <nav id="sidebar-nav" class="sidebar-nav"></nav>
+
+          <div class="sidebar-footer">
+            <button type="button" id="sidebar-goal-card" class="sidebar-goal-card" title="Clique para configurar a meta mensal">
+              <div class="row-between">
+                <span class="muted" style="font-weight:600;margin:0">Meta do Mês</span>
+                <span id="sidebar-goal-pct" class="pill pill-lime tabular-nums">0%</span>
+              </div>
+              <div class="goal-progress-track">
+                <div id="sidebar-goal-fill" class="goal-progress-fill" style="width: 0%"></div>
+              </div>
+              <div id="sidebar-goal-sub" class="muted tabular-nums">R$ 0,00 / R$ 10.000,00</div>
+            </button>
+
+            <div class="sidebar-user-row">
+              <span id="admin-user-email" class="sidebar-user-email">admin@exemplo.invalid</span>
+              <button type="button" id="btn-logout" class="btn btn-ghost btn-sm">Sair</button>
+            </div>
           </div>
-        </header>
+        </aside>
 
-        <main class="container">
-          <!-- Métricas -->
-          <section class="stats-grid" id="stats-grid">
-            <div class="stat-card">
-              <div class="stat-label">Licenças Ativas</div>
-              <div class="stat-value" id="stat-active">0</div>
-              <div class="stat-sub" id="stat-total">de 0 emitidas</div>
+        <!-- Zona 2: Área Principal + Topbar -->
+        <div class="main-column">
+          <header class="topbar">
+            <div class="topbar-left">
+              <button type="button" id="btn-mobile-menu" class="icon-btn mobile-only" aria-label="Abrir menu" title="Menu">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M3 6h18M3 12h18M3 18h18"></path>
+                </svg>
+              </button>
+              <nav id="topbar-breadcrumb" class="breadcrumb" aria-label="Breadcrumb">
+                <span class="breadcrumb-group">Dashboard</span>
+                <span class="breadcrumb-sep">/</span>
+                <span class="breadcrumb-current">Visão Geral</span>
+              </nav>
             </div>
-            <div class="stat-card">
-              <div class="stat-label">PCs Vinculados</div>
-              <div class="stat-value" id="stat-machines">0</div>
-              <div class="stat-sub">Dispositivos ativos</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Webhooks Processados</div>
-              <div class="stat-value" id="stat-webhooks">0</div>
-              <div class="stat-sub">Hotmart · Kiwify · Ticto · Stripe</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Entregas Automáticas</div>
-              <div class="stat-value" id="stat-deliveries">0</div>
-              <div class="stat-sub" id="stat-deliveries-sub">0 E-mails · 0 WhatsApps</div>
-            </div>
-          </section>
 
-          <!-- Abas de Navegação -->
-          <nav class="tabs-bar" id="tabs-bar">
-            <button class="tab-btn active" data-tab="licenses">🔑 Licenças &amp; Clientes</button>
-            <button class="tab-btn" data-tab="webhooks">🔗 Webhooks de Checkout</button>
-            <button class="tab-btn" data-tab="messaging">📩 E-mail &amp; WhatsApp</button>
-            <button class="tab-btn" data-tab="security">🛡️ Releases &amp; Conta</button>
-          </nav>
-
-          <!-- Toast global -->
-          <div id="toast-box" class="toast hidden"></div>
-
-          <!-- ABA 1: LICENÇAS -->
-          <section id="tab-licenses" class="tab-panel active">
-            <div class="two-col">
-              <div class="panel-card">
-                <div class="card-header">
-                  <h2>Emitir Nova Licença Manualmente</h2>
-                  <p class="muted">Gera a chave assinada e opcionalmente envia na hora por E-mail e WhatsApp.</p>
-                </div>
-
-                <form id="create-license-form" class="form-stack">
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>E-mail do cliente *</span>
-                      <input type="email" id="lic-email" required placeholder="cliente@empresa.com" />
-                    </label>
-                    <label class="field">
-                      <span>Nome completo</span>
-                      <input type="text" id="lic-name" placeholder="Nome do comprador" />
-                    </label>
-                  </div>
-
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>WhatsApp (DDD + Número)</span>
-                      <input type="text" id="lic-phone" placeholder="5511999999999" />
-                    </label>
-                    <label class="field">
-                      <span>Limite customizado de PCs (opcional)</span>
-                      <input type="number" id="lic-custom-pcs" min="1" max="50" placeholder="Padrão do plano" />
-                    </label>
-                  </div>
-
-                  <div class="field">
-                    <span>Plano contratado</span>
-                    <div class="segmented-group" id="plan-picker">
-                      <button type="button" class="seg-btn active" data-plan="individual">
-                        <strong>Individual</strong>
-                        <small>2 serv. · 2 PCs</small>
-                      </button>
-                      <button type="button" class="seg-btn" data-plan="agencia_10">
-                        <strong>Agência 10</strong>
-                        <small>10 serv. · 3 PCs</small>
-                      </button>
-                      <button type="button" class="seg-btn" data-plan="agencia_ilimitada">
-                        <strong>Agência Ilimitada</strong>
-                        <small>∞ serv. · 5 PCs</small>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="grid-2">
-                    <div class="field">
-                      <span>Upgrades liberados</span>
-                      <div class="check-row">
-                        <label class="check-pill"><input type="checkbox" id="lic-up-bonus" value="bonus" /> <span>Pack Bônus</span></label>
-                        <label class="check-pill"><input type="checkbox" id="lic-up-video" value="video" /> <span>Vídeo Remotion</span></label>
-                      </div>
-                    </div>
-                    <div class="field">
-                      <span>Entrega automática agora</span>
-                      <div class="check-row">
-                        <label class="check-pill"><input type="checkbox" id="lic-send-email" checked /> <span>Enviar E-mail</span></label>
-                        <label class="check-pill"><input type="checkbox" id="lic-send-wa" /> <span>Enviar WhatsApp</span></label>
-                      </div>
-                    </div>
-                  </div>
-
-                  <label class="check-inline">
-                    <input type="checkbox" id="lic-force-new" />
-                    <span>Gerar uma nova chave separada mesmo se este e-mail já possuir licença ativa</span>
-                  </label>
-
-                  <button type="submit" class="btn btn-primary" id="btn-create-license">
-                    Gerar Licença Agora
-                  </button>
-                </form>
-
-                <div id="created-license-box" class="result-highlight hidden">
-                  <div class="result-title">Licença emitida com sucesso!</div>
-                  <div class="mono-key" id="created-key-text"></div>
-                  <div class="result-meta" id="created-delivery-status"></div>
-                  <div class="btn-row">
-                    <button type="button" class="btn btn-secondary" id="btn-copy-created-key">Copiar Chave</button>
-                    <button type="button" class="btn btn-ghost" id="btn-copy-created-msg">Copiar Texto Completo</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="panel-card">
-                <div class="card-header row-between">
-                  <div>
-                    <h2>Licenças Emitidas</h2>
-                    <p class="muted">Acompanhe ativações, PCs vinculados e dispare reenvios com 1 clique.</p>
-                  </div>
-                  <div class="search-box">
-                    <input type="search" id="lic-search" placeholder="Buscar por e-mail, nome ou chave..." />
-                    <button type="button" class="btn btn-secondary" id="btn-refresh-licenses">Atualizar</button>
-                  </div>
-                </div>
-
-                <div id="licenses-list" class="licenses-list"></div>
+            <div class="topbar-right">
+              <button type="button" id="btn-open-cmdk" class="btn btn-ghost btn-sm hide-sm" title="Busca Global (Ctrl+K)">
+                <span>Buscar</span>
+                <span class="kbd-pill">Ctrl K</span>
+              </button>
+              <button type="button" id="btn-quick-license" class="btn btn-primary btn-sm">+ Nova Licença</button>
+              <button type="button" id="btn-quick-simulate" class="btn btn-secondary btn-sm hide-sm">⚡ Simular</button>
+              <button type="button" id="btn-global-refresh" class="icon-btn" aria-label="Atualizar dados" title="Atualizar dados">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                  <polyline points="21 3 21 9 15 9"></polyline>
+                </svg>
+              </button>
+              <button
+                type="button"
+                id="btn-topbar-theme"
+                class="theme-toggle-btn"
+                aria-label="Alternar tema claro/escuro"
+                title="Alternar tema claro/escuro"
+              >
+                <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                </svg>
+                <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+              </button>
+              <button type="button" id="btn-toggle-rail" class="icon-btn" aria-label="Alternar painel ao vivo" title="Painel Ao Vivo">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                  <path d="M15 3v18"></path>
+                </svg>
+              </button>
+              <div id="topbar-user-pill" class="topbar-user-pill hide-sm">
+                <span id="topbar-avatar" class="avatar-circle">A</span>
+                <span id="topbar-user-name">Admin</span>
               </div>
             </div>
-          </section>
+          </header>
 
-          <!-- ABA 2: WEBHOOKS DE CHECKOUT -->
-          <section id="tab-webhooks" class="tab-panel">
-            <div class="two-col">
-              <div class="panel-card">
-                <div class="card-header">
-                  <h2>URLs de Webhook &amp; Integração com Checkouts</h2>
-                  <p class="muted">Cole a URL correspondente na Hotmart, Kiwify, Ticto ou Stripe. Quando houver venda aprovada, a licença é criada e enviada por E-mail + WhatsApp na hora.</p>
-                </div>
+          <main id="view-root" class="view-root"></main>
+        </div>
 
-                <div class="webhook-urls-box" id="webhook-urls-box"></div>
-
-                <form id="webhook-config-form" class="form-stack mt-16">
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>Hotmart Hottok <small id="status-wh-hotmart" class="status-dot"></small></span>
-                      <input type="password" id="wh-hotmart" placeholder="Deixe vazio para manter atual" />
-                    </label>
-                    <label class="field">
-                      <span>Kiwify Token / Secret <small id="status-wh-kiwify" class="status-dot"></small></span>
-                      <input type="password" id="wh-kiwify" placeholder="Deixe vazio para manter atual" />
-                    </label>
-                    <label class="field">
-                      <span>Ticto Token <small id="status-wh-ticto" class="status-dot"></small></span>
-                      <input type="password" id="wh-ticto" placeholder="Deixe vazio para manter atual" />
-                    </label>
-                    <label class="field">
-                      <span>Stripe Webhook Secret <small id="status-wh-stripe" class="status-dot"></small></span>
-                      <input type="password" id="wh-stripe" placeholder="whsec_... (vazio para manter)" />
-                    </label>
-                  </div>
-
-                  <label class="field">
-                    <span>Mapeamento de IDs dos Produtos (PRODUCT_MAP_JSON)</span>
-                    <textarea id="wh-product-map" rows="5" class="mono-input"></textarea>
-                  </label>
-
-                  <button type="submit" class="btn btn-primary">Salvar Configurações de Checkout</button>
-                </form>
-
-                <hr class="divider" />
-
-                <div class="card-header">
-                  <h3>Simulador de Compra (Teste Ponta a Ponta)</h3>
-                  <p class="muted">Simula uma venda aprovada ou reembolso para testar geração de chave + disparo de E-mail e WhatsApp.</p>
-                </div>
-                <form id="webhook-sim-form" class="form-stack">
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>Plataforma</span>
-                      <div class="segmented-group" id="sim-provider-picker">
-                        <button type="button" class="seg-btn active" data-provider="hotmart">Hotmart</button>
-                        <button type="button" class="seg-btn" data-provider="kiwify">Kiwify</button>
-                        <button type="button" class="seg-btn" data-provider="ticto">Ticto</button>
-                        <button type="button" class="seg-btn" data-provider="stripe">Stripe</button>
-                      </div>
-                    </label>
-                    <label class="field">
-                      <span>Evento</span>
-                      <div class="segmented-group" id="sim-event-picker">
-                        <button type="button" class="seg-btn active" data-event="PURCHASE_APPROVED">Compra Aprovada</button>
-                        <button type="button" class="seg-btn" data-event="PURCHASE_REFUNDED">Reembolso</button>
-                      </div>
-                    </label>
-                  </div>
-                  <div class="grid-3">
-                    <label class="field">
-                      <span>E-mail comprador *</span>
-                      <input type="email" id="sim-email" required placeholder="comprador@teste.com" />
-                    </label>
-                    <label class="field">
-                      <span>Nome</span>
-                      <input type="text" id="sim-name" value="Cliente Teste" />
-                    </label>
-                    <label class="field">
-                      <span>WhatsApp</span>
-                      <input type="text" id="sim-phone" placeholder="5511999999999" />
-                    </label>
-                  </div>
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>Product ID</span>
-                      <input type="text" id="sim-product-id" value="PROD_INDIVIDUAL" />
-                    </label>
-                    <label class="field">
-                      <span>Nome da Oferta</span>
-                      <input type="text" id="sim-offer" value="Criativo AI Studio Individual" />
-                    </label>
-                  </div>
-                  <button type="submit" class="btn btn-secondary">Simular Webhook Agora</button>
-                </form>
-              </div>
-
-              <div class="panel-card">
-                <div class="card-header row-between">
-                  <div>
-                    <h2>Histórico de Webhooks Recebidos</h2>
-                    <p class="muted">Últimas notificações processadas com idempotência.</p>
-                  </div>
-                  <button type="button" class="btn btn-secondary" id="btn-refresh-webhooks">Atualizar</button>
-                </div>
-                <div id="webhooks-history" class="history-list"></div>
-              </div>
+        <!-- Zona 3: Activity Rail Ao Vivo -->
+        <aside id="activity-rail-root" class="activity-rail" aria-label="Feed de atividades ao vivo">
+          <div class="panel-card">
+            <div class="card-header">
+              <h3>Feed Ao Vivo</h3>
+              <p class="muted">Notificações, atividades recentes e status dos canais serão exibidos aqui.</p>
             </div>
-          </section>
-
-          <!-- ABA 3: E-MAIL & WHATSAPP -->
-          <section id="tab-messaging" class="tab-panel">
-            <div class="two-col">
-              <!-- Config Email -->
-              <div class="panel-card">
-                <div class="card-header">
-                  <h2>Entrega Automática por E-mail (SMTP / Resend)</h2>
-                  <p class="muted">Envia automaticamente e-mail HTML com a chave e links de download.</p>
-                </div>
-
-                <form id="email-config-form" class="form-stack">
-                  <div class="field">
-                    <span>Provedor de E-mail</span>
-                    <div class="segmented-group" id="email-provider-picker">
-                      <button type="button" class="seg-btn active" data-provider="smtp">SMTP Próprio</button>
-                      <button type="button" class="seg-btn" data-provider="resend">Resend API</button>
-                      <button type="button" class="seg-btn" data-provider="none">Desativado</button>
-                    </div>
-                  </div>
-
-                  <div id="smtp-fields" class="form-stack">
-                    <div class="grid-3">
-                      <label class="field">
-                        <span>Host SMTP</span>
-                        <input type="text" id="smtp-host" placeholder="smtp.hostinger.com" />
-                      </label>
-                      <label class="field">
-                        <span>Porta</span>
-                        <input type="number" id="smtp-port" value="465" />
-                      </label>
-                      <label class="field">
-                        <span>Conexão segura (SSL/TLS)</span>
-                        <label class="check-inline mt-8"><input type="checkbox" id="smtp-secure" checked /> <span>SSL Ativo (465)</span></label>
-                      </label>
-                    </div>
-                    <div class="grid-2">
-                      <label class="field">
-                        <span>Usuário SMTP</span>
-                        <input type="text" id="smtp-user" placeholder="noreply@criativoaistudio.com.br" />
-                      </label>
-                      <label class="field">
-                        <span>Senha SMTP <small id="status-smtp-pass" class="status-dot"></small></span>
-                        <input type="password" id="smtp-pass" placeholder="Deixe vazio para manter atual" />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div id="resend-fields" class="form-stack hidden">
-                    <label class="field">
-                      <span>Resend API Key <small id="status-resend-key" class="status-dot"></small></span>
-                      <input type="password" id="resend-key" placeholder="re_..." />
-                    </label>
-                  </div>
-
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>Nome do Remetente</span>
-                      <input type="text" id="from-name" value="Criativo AI Studio" />
-                    </label>
-                    <label class="field">
-                      <span>E-mail Remetente</span>
-                      <input type="email" id="from-email" placeholder="suporte@criativoaistudio.com.br" />
-                    </label>
-                  </div>
-
-                  <div class="field">
-                    <span>Links de Download enviados ao cliente</span>
-                    <div class="form-stack">
-                      <input type="url" id="dl-win" placeholder="URL Instalador Windows (.exe)" />
-                      <input type="url" id="dl-mac" placeholder="URL Instalador macOS (.dmg)" />
-                      <input type="url" id="dl-linux" placeholder="URL Instalador Linux (.AppImage)" />
-                    </div>
-                  </div>
-
-                  <div class="btn-row">
-                    <button type="submit" class="btn btn-primary">Salvar Config de E-mail</button>
-                    <input type="email" id="test-email-to" placeholder="seu-email@teste.com" class="inline-input" />
-                    <button type="button" class="btn btn-secondary" id="btn-test-email">Testar Envio</button>
-                  </div>
-                </form>
-              </div>
-
-              <!-- Config WhatsApp Oficial (Standby) -->
-              <div class="panel-card">
-                <div class="card-header row-between">
-                  <div>
-                    <h2>Entrega Automática por WhatsApp (API Oficial Meta)</h2>
-                    <p class="muted">Integração exclusiva com a Meta WhatsApp Cloud API Oficial. Atualmente em standby até você ativar.</p>
-                  </div>
-                  <span id="wa-standby-badge" class="badge-pill">Em Standby</span>
-                </div>
-
-                <form id="wa-config-form" class="form-stack">
-                  <div class="field">
-                    <span>Status da Integração WhatsApp</span>
-                    <div class="segmented-group" id="wa-provider-picker">
-                      <button type="button" class="seg-btn active" data-provider="none">
-                        <strong>Em Standby</strong>
-                        <small>Desativado por enquanto</small>
-                      </button>
-                      <button type="button" class="seg-btn" data-provider="cloud_api">
-                        <strong>Meta Cloud API Oficial</strong>
-                        <small>Graph API v27.0</small>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div id="wa-standby-note" class="baileys-box">
-                    <div class="muted">
-                      O módulo oficial da Meta está preparado no backend e em standby. Os webhooks de venda e a emissão manual vão enviar apenas o E-mail até você ativar a Meta Cloud API Oficial aqui.
-                    </div>
-                  </div>
-
-                  <!-- Meta Cloud API Oficial -->
-                  <div id="wa-cloud-fields" class="form-stack hidden">
-                    <div class="grid-3">
-                      <label class="field"><span>Phone Number ID</span><input type="text" id="wa-cloud-phone" placeholder="123456789012345" /></label>
-                      <label class="field"><span>Access Token Meta <small id="status-cloud-key" class="status-dot"></small></span><input type="password" id="wa-cloud-token" placeholder="EAAG... (vazio mantém)" /></label>
-                      <label class="field"><span>Versão Graph API</span><input type="text" id="wa-cloud-version" value="v27.0" /></label>
-                    </div>
-
-                    <div class="grid-3">
-                      <label class="field">
-                        <span>Modo de Disparo</span>
-                        <div class="segmented-group" id="wa-mode-picker">
-                          <button type="button" class="seg-btn active" data-mode="template">Template Oficial</button>
-                          <button type="button" class="seg-btn" data-mode="text">Texto</button>
-                        </div>
-                      </label>
-                      <label class="field"><span>Nome do Template (Meta)</span><input type="text" id="wa-template-name" placeholder="criativo_entrega_licenca" /></label>
-                      <label class="field"><span>Idioma</span><input type="text" id="wa-template-lang" value="pt_BR" /></label>
-                    </div>
-
-                    <label class="field">
-                      <span>Mensagem padrão (quando modo Texto; variáveis {{1}}=Nome, {{2}}=E-mail, {{3}}=Chave, {{4}}=Plano)</span>
-                      <textarea id="wa-template" rows="4" class="mono-input"></textarea>
-                    </label>
-                  </div>
-
-                  <div class="btn-row">
-                    <button type="submit" class="btn btn-primary">Salvar Config WhatsApp</button>
-                    <input type="text" id="test-wa-phone" placeholder="5511999999999" class="inline-input" />
-                    <button type="button" class="btn btn-secondary" id="btn-test-wa">Testar API Oficial</button>
-                  </div>
-                </form>
-
-                <hr class="divider" />
-                <div class="row-between">
-                  <h3>Últimos Envios (E-mail &amp; WhatsApp)</h3>
-                  <button type="button" class="btn btn-ghost" id="btn-refresh-logs">Atualizar Logs</button>
-                </div>
-                <div id="notification-logs-list" class="history-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <!-- ABA 4: RELEASES & CONTA -->
-          <section id="tab-security" class="tab-panel">
-            <div class="two-col">
-              <div class="panel-card">
-                <div class="card-header">
-                  <h2>Publicar Versão no Feed de Auto-Update</h2>
-                  <p class="muted">Cadastre uma nova versão com links dos instaladores e SHA-256 para notificar os apps Desktop.</p>
-                </div>
-
-                <form id="release-form" class="form-stack">
-                  <div class="grid-2">
-                    <label class="field">
-                      <span>Versão (ex: 1.0.1)</span>
-                      <input type="text" id="rel-version" required placeholder="1.0.1" />
-                    </label>
-                    <label class="field">
-                      <span>Canal</span>
-                      <div class="segmented-group" id="rel-channel-picker">
-                        <button type="button" class="seg-btn active" data-channel="stable">Stable</button>
-                        <button type="button" class="seg-btn" data-channel="beta">Beta</button>
-                      </div>
-                    </label>
-                  </div>
-
-                  <label class="field">
-                    <span>Formato de Entrega</span>
-                    <div class="segmented-group" id="rel-mode-picker">
-                      <button type="button" class="seg-btn active" data-relmode="links">Instaladores / GitHub Release</button>
-                      <button type="button" class="seg-btn" data-relmode="hot_bundle">Hot-Bundle Instantâneo (JSON)</button>
-                    </div>
-                  </label>
-
-                  <label class="field">
-                    <span>Notas da Atualização (Changelog)</span>
-                    <textarea id="rel-changelog" rows="3" placeholder="- Melhorias de performance e correções"></textarea>
-                  </label>
-
-                  <div id="rel-links-fields" class="form-stack">
-                    <div class="baileys-box">
-                      <div class="row-between mb-8">
-                        <strong>Importar direto do GitHub Release</strong>
-                        <small class="muted">Puxa tag, notas, links e SHA256SUMS.txt automaticamente</small>
-                      </div>
-                      <div class="grid-3">
-                        <label class="field"><span>Repositório GitHub</span><input type="text" id="rel-gh-repo" placeholder="owner/criativo-ai-studio-online" /></label>
-                        <label class="field"><span>Tag (opcional)</span><input type="text" id="rel-gh-tag" placeholder="v1.0.1 ou vazio = latest" /></label>
-                        <div class="field" style="justify-content:flex-end">
-                          <button type="button" class="btn btn-secondary" id="btn-import-github">Importar do GitHub</button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="grid-2">
-                      <label class="field"><span>URL Windows (.exe)</span><input type="url" id="rel-win-url" placeholder="https://github.com/.../CriativoAIStudio-Setup-1.0.1.exe" /></label>
-                      <label class="field"><span>SHA-256 Windows</span><input type="text" id="rel-win-sha" class="mono-input" placeholder="64 caracteres hex" /></label>
-                    </div>
-                    <div class="grid-2">
-                      <label class="field"><span>URL macOS (.dmg)</span><input type="url" id="rel-mac-url" placeholder="https://github.com/.../CriativoAIStudio-1.0.1-universal.dmg" /></label>
-                      <label class="field"><span>SHA-256 macOS</span><input type="text" id="rel-mac-sha" class="mono-input" placeholder="64 caracteres hex" /></label>
-                    </div>
-                    <div class="grid-2">
-                      <label class="field"><span>URL Linux (.AppImage)</span><input type="url" id="rel-linux-url" placeholder="https://github.com/.../CriativoAIStudio-1.0.1.AppImage" /></label>
-                      <label class="field"><span>SHA-256 Linux</span><input type="text" id="rel-linux-sha" class="mono-input" placeholder="64 caracteres hex" /></label>
-                    </div>
-
-                    <details>
-                      <summary class="muted" style="cursor:pointer">JSON Avançado de Artefatos (opcional / sobrescreve se editado)</summary>
-                      <label class="field mt-8">
-                        <span>Artefatos (JSON de arquivos + SHA-256)</span>
-                        <textarea id="rel-artifacts" rows="5" class="mono-input"></textarea>
-                      </label>
-                    </details>
-                  </div>
-
-                  <div id="rel-hotbundle-fields" class="form-stack hidden">
-                    <div class="baileys-box">
-                      <div class="muted">
-                        Selecione o arquivo <code>criativo-update-*.json</code> gerado por <code>scripts/gerar-release-bundle.mjs</code> (ou cole o JSON abaixo). O Painel calcula o SHA-256 automático e libera para Windows, macOS, Linux e VPS sem precisar reinstalar o executável.
-                      </div>
-                    </div>
-                    <label class="field">
-                      <span>Carregar arquivo Hot-Bundle (.json)</span>
-                      <input type="file" id="rel-hotbundle-file" accept=".json,application/json" />
-                    </label>
-                    <label class="field">
-                      <span>Conteúdo JSON do Hot-Bundle</span>
-                      <textarea id="rel-hotbundle-json" rows="6" class="mono-input" placeholder='{"format":"criativo-update-bundle-v1","version":"1.0.1","files":[...]}'></textarea>
-                    </label>
-                  </div>
-
-                  <button type="submit" class="btn btn-primary">Publicar Release no Feed</button>
-                </form>
-
-                <div id="releases-list" class="history-list mt-16"></div>
-              </div>
-
-              <div class="panel-card">
-                <div class="card-header">
-                  <h2>Chave Pública Ed25519 &amp; Senha de Acesso</h2>
-                  <p class="muted">Material criptográfico público usado para validar assinaturas e alteração da sua senha de login.</p>
-                </div>
-
-                <label class="field">
-                  <span>Chave Pública Ed25519 Ativa (pública)</span>
-                  <textarea id="public-key-box" rows="4" readonly class="mono-input"></textarea>
-                </label>
-
-                <hr class="divider" />
-
-                <form id="change-password-form" class="form-stack">
-                  <h3>Alterar Senha do Painel</h3>
-                  <label class="field">
-                    <span>Senha atual</span>
-                    <input type="password" id="pwd-current" required />
-                  </label>
-                  <label class="field">
-                    <span>Nova senha (mínimo 8 caracteres)</span>
-                    <input type="password" id="pwd-new" required minlength="8" />
-                  </label>
-                  <button type="submit" class="btn btn-secondary">Atualizar Senha</button>
-                </form>
-              </div>
-            </div>
-          </section>
-        </main>
+          </div>
+        </aside>
       </div>
     </div>
+
+    <!-- Slots Globais de Overlay -->
+    <div id="toast-box" class="toast-stack" aria-live="polite"></div>
+    <div id="modal-root"></div>
+    <div id="drawer-root"></div>
+    <div id="cmdk-root"></div>
 
     <script type="module" src="/app.js"></script>
   </body>
