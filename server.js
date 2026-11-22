@@ -50,6 +50,13 @@ export function createPainelApp(options = {}) {
     if (req.path.startsWith("/api/")) {
       return res.status(404).json({ error: "not_found" });
     }
+    if (
+      req.path.startsWith("/js/") ||
+      req.path.startsWith("/styles/") ||
+      /\.(js|mjs|css|map|png|svg|ico|webp|jpg|jpeg|woff2?)$/i.test(req.path)
+    ) {
+      return res.status(404).json({ error: "asset_not_found" });
+    }
     const indexPath = path.join(PUBLIC_DIR, "index.html");
     if (fs.existsSync(indexPath)) {
       return res.sendFile(indexPath);

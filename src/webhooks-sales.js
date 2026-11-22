@@ -1,39 +1,45 @@
 import express from "express";
 import crypto from "node:crypto";
 import { timingSafeEqualString } from "./license-hub.js";
+import {
+  SUPPORTED_PROVIDERS,
+  parseMoneyToCents,
+  normalizePaymentMethod,
+  classifyWebhookEvent,
+  resolveProductMapping,
+  detectProvider,
+  verifyProviderSignature,
+  parseWebhookPayload,
+} from "./webhook-parsers.js";
 
-function resolveProductMapping(productId, offerName, productMap) {
-  const cleanId = String(productId || "").trim();
-  if (cleanId && productMap[cleanId]) {
-    return productMap[cleanId];
-  }
-  const text = String(offerName || "").toLowerCase();
-  const addUpgrades = [];
-  if (text.includes("video") || text.includes("vídeo") || text.includes("remotion")) addUpgrades.push("video");
-  if (text.includes("bonus") || text.includes("bônus")) addUpgrades.push("bonus");
+const MAX_RAW_PAYLOAD_BYTES = 256 * 1024;
 
-  let planTier = "individual";
-  if (text.includes("ilimitad")) {
-    planTier = "agencia_ilimitada";
-  } else if (text.includes("agencia") || text.includes("agência")) {
-    planTier = "agencia_10";
+function serializeRawPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  try {
+    const json = JSON.stringify(payload);
+    return Buffer.byteLength(json, "utf8") <= MAX_RAW_PAYLOAD_BYTES
+      ? json
+      : JSON.stringify({ _truncated: true, preview: json.slice(0, MAX_RAW_PAYLOAD_BYTES - 128) });
+  } catch {
+    return null;
   }
-  return { planTier, addUpgrades };
 }
 
-function verifyStripeSignature(rawBody, headerValue, secret) {
-  if (!secret || !headerValue || !rawBody) return false;
-  const parts = Object.fromEntries(
-    String(headerValue)
-      .split(",")
-      .map((kv) => kv.trim().split("=")),
-  );
-  if (!parts.t || !parts.v1) return false;
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(`${parts.t}.${rawBody}`)
-    .digest("hex");
-  return timingSafeEqualString(parts.v1, expected);
+function mapStatusLabel(row) {
+  if (row.action === "issued_or_updated") return row.is_simulated ? "simulado" : "aprovado";
+  if (row.action === "revoked") return "reembolso";
+  if (row.action === "auth_error" || row.action === "error") return "erro";
+  return "ignorado";
+}
+
+function parseJsonSafe(raw, fallback = null) {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }
 
 export function createSalesWebhooksRouter(hub, options = {}) {
@@ -54,44 +60,36 @@ export function createSalesWebhooksRouter(hub, options = {}) {
       kiwify: options.kiwifyToken ?? (hub.vault.getSetting("wh_kiwify_token", "") || process.env.KIWIFY_WEBHOOK_TOKEN || ""),
       ticto: options.tictoToken ?? (hub.vault.getSetting("wh_ticto_token", "") || process.env.TICTO_WEBHOOK_TOKEN || ""),
       stripe: options.stripeSecret ?? (hub.vault.getSetting("wh_stripe_secret", "") || process.env.STRIPE_WEBHOOK_SECRET || ""),
+      cakto: options.caktoSecret ?? (hub.vault.getSetting("wh_cakto_secret", "") || process.env.CAKTO_WEBHOOK_SECRET || ""),
+      kirvano: options.kirvanoToken ?? (hub.vault.getSetting("wh_kirvano_token", "") || process.env.KIRVANO_WEBHOOK_TOKEN || ""),
+      generic: options.genericHmacSecret ?? (hub.vault.getSetting("wh_generic_hmac_secret", "") || process.env.GENERIC_WEBHOOK_HMAC_SECRET || ""),
       productMap: options.productMap || (vaultMap && Object.keys(vaultMap).length > 0 ? vaultMap : envMap),
     };
   }
 
-  // Rotas de configuração dos webhooks dentro do Painel Admin
   router.get("/admin/webhooks/config", hub.requireAdmin, (_req, res) => {
     const cfg = getWebhookSettings();
     const baseUrl = (process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br").replace(/\/+$/, "");
-    return res.json({
-      urls: {
-        hotmart: `${baseUrl}/api/webhooks/sales?provider=hotmart`,
-        kiwify: `${baseUrl}/api/webhooks/sales?provider=kiwify`,
-        ticto: `${baseUrl}/api/webhooks/sales?provider=ticto`,
-        stripe: `${baseUrl}/api/webhooks/sales?provider=stripe`,
-      },
-      secretsConfigured: {
-        hotmart: Boolean(cfg.hotmart),
-        kiwify: Boolean(cfg.kiwify),
-        ticto: Boolean(cfg.ticto),
-        stripe: Boolean(cfg.stripe),
-      },
-      productMap: cfg.productMap,
-    });
+    const urls = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [p, `${baseUrl}/api/webhooks/sales?provider=${p}`]));
+    const secretsConfigured = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [p, Boolean(cfg[p])]));
+    return res.json({ urls, secretsConfigured, productMap: cfg.productMap });
   });
 
   router.put("/admin/webhooks/config", hub.requireAdmin, (req, res) => {
     const body = req.body || {};
-    if (body.hotmartHottok !== undefined && String(body.hotmartHottok).trim() !== "") {
-      hub.vault.setSetting("wh_hotmart_hottok", String(body.hotmartHottok).trim(), { isSecret: true });
-    }
-    if (body.kiwifyToken !== undefined && String(body.kiwifyToken).trim() !== "") {
-      hub.vault.setSetting("wh_kiwify_token", String(body.kiwifyToken).trim(), { isSecret: true });
-    }
-    if (body.tictoToken !== undefined && String(body.tictoToken).trim() !== "") {
-      hub.vault.setSetting("wh_ticto_token", String(body.tictoToken).trim(), { isSecret: true });
-    }
-    if (body.stripeSecret !== undefined && String(body.stripeSecret).trim() !== "") {
-      hub.vault.setSetting("wh_stripe_secret", String(body.stripeSecret).trim(), { isSecret: true });
+    const secretMap = [
+      ["hotmartHottok", "wh_hotmart_hottok"],
+      ["kiwifyToken", "wh_kiwify_token"],
+      ["tictoToken", "wh_ticto_token"],
+      ["stripeSecret", "wh_stripe_secret"],
+      ["caktoSecret", "wh_cakto_secret"],
+      ["kirvanoToken", "wh_kirvano_token"],
+      ["genericHmacSecret", "wh_generic_hmac_secret"],
+    ];
+    for (const [field, key] of secretMap) {
+      if (body[field] !== undefined && String(body[field]).trim() !== "") {
+        hub.vault.setSetting(key, String(body[field]).trim(), { isSecret: true });
+      }
     }
     if (body.productMap && typeof body.productMap === "object") {
       hub.vault.setSetting("webhook_product_map", body.productMap);
@@ -99,233 +97,241 @@ export function createSalesWebhooksRouter(hub, options = {}) {
     return res.json({ ok: true });
   });
 
-  async function processSaleEvent({ provider, eventName, transactionId, buyerEmail, buyerName, buyerPhone, productId, offerName, rawSummary = {} }) {
-    const cfg = getWebhookSettings();
-    const txId = transactionId || crypto.createHash("sha256").update(JSON.stringify(rawSummary)).digest("hex").slice(0, 24);
-    const deliveryKey = `${provider}:${txId}:${eventName}`;
-    const alreadyProcessed = hub.db
-      .prepare(`SELECT delivery_key, license_key, action FROM sales_webhook_deliveries WHERE delivery_key = ?;`)
-      .get(deliveryKey);
+  function recordWebhookFailure({ provider, body, parsed, httpStatus, action, errorDetail }) {
+    const id = crypto.randomBytes(12).toString("hex");
+    const deliveryKey = `${provider}:err:${crypto.randomUUID()}`;
+    const txId = String(parsed?.transactionId || body?.id || body?.order_id || `err_${crypto.randomUUID().slice(0, 12)}`);
+    const eventName = String(parsed?.eventName || body?.event || body?.type || (httpStatus === 401 ? "auth_failed" : "webhook_error"));
+    const safePayload = body && typeof body === "object" ? { ...body } : {};
+    if (httpStatus === 401) {
+      delete safePayload.secret;
+      delete safePayload.hottok;
+      delete safePayload.token;
+    }
+    hub.db
+      .prepare(
+        `INSERT INTO sales_webhook_deliveries (
+          id, delivery_key, provider, transaction_id, event_name, buyer_email, buyer_name, buyer_phone,
+          action, license_key, amount_cents, currency, payment_method, plan_tier, product_id, offer_name,
+          raw_payload_json, http_status, error_detail, is_simulated, summary_json, processed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, ?, ?);`,
+      )
+      .run(
+        id, deliveryKey, provider, txId, eventName, parsed?.buyerEmail || null, parsed?.buyerName || null, parsed?.buyerPhone || null,
+        action, parsed?.amountCents || 0, parsed?.currency || "BRL", parsed?.paymentMethod || null,
+        parsed?.productId || null, parsed?.offerName || null, serializeRawPayload(safePayload),
+        httpStatus, String(errorDetail || "").slice(0, 500), JSON.stringify({ error: errorDetail }), new Date().toISOString(),
+      );
+    return id;
+  }
 
-    if (alreadyProcessed) {
-      return { ok: true, idempotent: true, action: alreadyProcessed.action, license_key: alreadyProcessed.license_key };
+  async function processSaleEvent({
+    provider, eventName, transactionId, buyerEmail, buyerName, buyerPhone, productId, offerName,
+    amountCents = 0, currency = "BRL", paymentMethod = null, rawPayload = null, isSimulated = false,
+    allowReplay = false, replayOfId = null, forcedPlanTier = null, rawSummary = {},
+  }) {
+    const cfg = getWebhookSettings();
+    const txId = transactionId || crypto.createHash("sha256").update(JSON.stringify(rawPayload || rawSummary)).digest("hex").slice(0, 24);
+    const deliveryKey = `${provider}:${txId}:${eventName}`;
+
+    if (!allowReplay) {
+      const prev = hub.db.prepare(`SELECT id, license_key, action FROM sales_webhook_deliveries WHERE delivery_key = ?;`).get(deliveryKey);
+      if (prev) return { ok: true, idempotent: true, id: prev.id, action: prev.action, license_key: prev.license_key };
     }
 
-    const approvedEvents = new Set([
-      "purchase_approved",
-      "purchase_complete",
-      "compra_aprovada",
-      "order_approved",
-      "paid",
-      "authorized",
-      "checkout.session.completed",
-      "invoice.payment_succeeded",
-    ]);
-
-    const revokedEvents = new Set([
-      "purchase_refunded",
-      "purchase_chargeback",
-      "subscription_cancellation",
-      "purchase_canceled",
-      "compra_reembolsada",
-      "refunded",
-      "chargeback",
-      "charge.refunded",
-      "customer.subscription.deleted",
-    ]);
-
-    const normEvent = String(eventName || "").trim().toLowerCase();
+    const eventClass = classifyWebhookEvent(eventName);
     let action = "ignored";
     let licenseKey = null;
     let notifications = null;
+    const mapping = resolveProductMapping(productId, offerName, cfg.productMap);
+    if (forcedPlanTier) mapping.planTier = forcedPlanTier;
 
-    if (approvedEvents.has(normEvent) && buyerEmail) {
-      const mapping = resolveProductMapping(productId, offerName, cfg.productMap);
+    let resolvedAmountCents = Math.max(0, Math.round(Number(amountCents) || 0));
+    if (eventClass === "approved" && resolvedAmountCents === 0 && mapping.defaultAmountCents > 0) {
+      resolvedAmountCents = mapping.defaultAmountCents;
+    }
+    const resolvedCurrency = String(currency || mapping.currency || "BRL").toUpperCase();
+    const resolvedPlanTier = eventClass === "approved" ? mapping.planTier : null;
+
+    if (eventClass === "approved" && buyerEmail) {
       const lic = hub.issueOrUpdateLicenseFromSale({
-        email: buyerEmail,
-        customerName: buyerName,
-        customerPhone: buyerPhone,
-        planTier: mapping.planTier,
-        addUpgrades: mapping.addUpgrades,
-        provider,
-        transactionId: txId,
+        email: buyerEmail, customerName: buyerName, customerPhone: buyerPhone,
+        planTier: mapping.planTier, addUpgrades: mapping.addUpgrades, provider, transactionId: txId,
+        amountCents: resolvedAmountCents, currency: resolvedCurrency, paymentMethod,
+        sourceProvider: provider, isSimulated: Boolean(isSimulated),
       });
       action = "issued_or_updated";
       licenseKey = lic.license_key;
-
-      // Dispara automaticamente E-mail e WhatsApp de entrega da licença
-      notifications = await hub.dispatchLicenseNotifications(lic, {
-        sendEmail: true,
-        sendWhatsApp: Boolean(lic.customer_phone),
-      });
-    } else if (revokedEvents.has(normEvent) && buyerEmail) {
-      const lic = hub.revokeLicenseByEmailOrKey({
-        email: buyerEmail,
-        reason: eventName,
-        actor: provider,
-      });
+      notifications = await hub.dispatchLicenseNotifications(lic, { sendEmail: true, sendWhatsApp: Boolean(lic.customer_phone) });
+    } else if (eventClass === "revoked" && buyerEmail) {
+      const lic = hub.revokeLicenseByEmailOrKey({ email: buyerEmail, reason: eventName, actor: provider });
       action = lic ? "revoked" : "not_found";
       licenseKey = lic?.license_key || null;
     }
 
+    const nowIso = new Date().toISOString();
+    const summaryJson = JSON.stringify({
+      offerName, productId, amountCents: resolvedAmountCents, currency: resolvedCurrency, paymentMethod,
+      ...(isSimulated ? { simulated: true } : {}), ...rawSummary,
+    });
+
+    if (allowReplay && replayOfId) {
+      hub.db
+        .prepare(
+          `UPDATE sales_webhook_deliveries
+           SET action = ?, license_key = ?, plan_tier = COALESCE(?, plan_tier), amount_cents = ?, currency = ?,
+               payment_method = COALESCE(?, payment_method), http_status = 200, error_detail = NULL,
+               summary_json = ?, replayed_at = ?, replay_count = COALESCE(replay_count, 0) + 1
+           WHERE id = ?;`,
+        )
+        .run(action, licenseKey, resolvedPlanTier, resolvedAmountCents, resolvedCurrency, paymentMethod, summaryJson, nowIso, replayOfId);
+      return { ok: true, id: replayOfId, action, license_key: licenseKey, amount_cents: resolvedAmountCents, currency: resolvedCurrency, notifications };
+    }
+
+    const id = crypto.randomBytes(12).toString("hex");
     hub.db
       .prepare(
         `INSERT INTO sales_webhook_deliveries (
-          delivery_key, provider, transaction_id, event_name, buyer_email, buyer_phone, action, license_key, summary_json, processed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          id, delivery_key, provider, transaction_id, event_name, buyer_email, buyer_name, buyer_phone,
+          action, license_key, amount_cents, currency, payment_method, plan_tier, product_id, offer_name,
+          raw_payload_json, http_status, error_detail, is_simulated, summary_json, processed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 200, NULL, ?, ?, ?);`,
       )
       .run(
-        deliveryKey,
-        provider,
-        txId,
-        eventName,
-        buyerEmail || null,
-        buyerPhone || null,
-        action,
-        licenseKey,
-        JSON.stringify({ offerName, productId, ...rawSummary }),
-        new Date().toISOString(),
+        id, deliveryKey, provider, txId, eventName, buyerEmail || null, buyerName || null, buyerPhone || null,
+        action, licenseKey, resolvedAmountCents, resolvedCurrency, paymentMethod, resolvedPlanTier,
+        productId || null, offerName || null, serializeRawPayload(rawPayload), isSimulated ? 1 : 0, summaryJson, nowIso,
       );
-
-    return { ok: true, action, license_key: licenseKey, notifications };
+    return { ok: true, id, action, license_key: licenseKey, amount_cents: resolvedAmountCents, currency: resolvedCurrency, notifications };
   }
 
-  // Simulador autenticado no Painel para testar compra/reembolso sem precisar fazer venda real
   router.post("/admin/webhooks/simulate", hub.requireAdmin, async (req, res) => {
     const {
-      provider = "hotmart",
-      event_type = "PURCHASE_APPROVED",
-      email,
-      name = "Cliente Teste Webhook",
-      phone = "",
-      product_id = "PROD_INDIVIDUAL",
-      offer_name = "Licença Individual",
+      provider = "hotmart", event_type = "PURCHASE_APPROVED", email, name = "Cliente Teste Webhook", phone = "",
+      product_id = "PROD_INDIVIDUAL", offer_name = "Licença Individual", plan_tier = null,
+      amount_cents = null, amount = null, currency = "BRL", payment_method = "pix",
     } = req.body || {};
 
-    if (!email) {
-      return res.status(400).json({ error: "missing_email", message: "Informe um e-mail para simular o webhook." });
-    }
+    if (!email) return res.status(400).json({ error: "missing_email", message: "Informe um e-mail para simular o webhook." });
+    const cleanProvider = String(provider || "hotmart").trim().toLowerCase();
+    if (!SUPPORTED_PROVIDERS.includes(cleanProvider)) return res.status(400).json({ error: "unsupported_provider" });
+
+    const parsedCents =
+      amount_cents !== null && amount_cents !== undefined && amount_cents !== ""
+        ? parseMoneyToCents(amount_cents, { isIntegerCents: true })
+        : parseMoneyToCents(amount);
 
     const result = await processSaleEvent({
-      provider,
-      eventName: event_type,
-      transactionId: `sim_${Date.now()}`,
-      buyerEmail: email,
-      buyerName: name,
-      buyerPhone: phone,
-      productId: product_id,
-      offerName: offer_name,
-      rawSummary: { simulated: true },
+      provider: cleanProvider, eventName: event_type, transactionId: `sim_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+      buyerEmail: email, buyerName: name, buyerPhone: phone, productId: product_id, offerName: offer_name,
+      amountCents: parsedCents, currency: String(currency || "BRL").toUpperCase(), paymentMethod: normalizePaymentMethod(payment_method),
+      rawPayload: req.body || {}, isSimulated: true, forcedPlanTier: plan_tier || null, rawSummary: { simulated: true },
     });
     return res.json(result);
   });
 
-  // Endpoint público oficial dos Webhooks de Checkout (Hotmart, Kiwify, Ticto, Stripe)
-  router.post("/webhooks/sales", async (req, res) => {
-    const secrets = getWebhookSettings();
-    const provider = String(
-      req.query.provider ||
-        (req.headers["x-hotmart-hottok"]
-          ? "hotmart"
-          : req.headers["stripe-signature"]
-            ? "stripe"
-            : req.headers["x-kiwify-signature"] || req.headers["x-kiwify-token"]
-              ? "kiwify"
-              : req.body?.provider || ""),
-    )
-      .trim()
-      .toLowerCase();
+  router.get("/admin/webhooks/history", hub.requireAdmin, (_req, res) => {
+    const deliveries = hub.db.prepare(`SELECT * FROM sales_webhook_deliveries ORDER BY processed_at DESC LIMIT 100;`).all();
+    return res.json({ deliveries });
+  });
 
-    if (!["hotmart", "kiwify", "ticto", "stripe"].includes(provider)) {
-      return res.status(400).json({ error: "unsupported_provider" });
+  router.get("/admin/webhooks/deliveries", hub.requireAdmin, (req, res) => {
+    const provider = String(req.query.provider || "").trim().toLowerCase();
+    const status = String(req.query.status || "").trim().toLowerCase();
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || "50", 10) || 50));
+    const offset = Math.max(0, Number.parseInt(req.query.offset || "0", 10) || 0);
+
+    const clauses = [];
+    const params = [];
+    if (provider) { clauses.push("provider = ?"); params.push(provider); }
+    const statusFilters = {
+      aprovado: "action = 'issued_or_updated' AND COALESCE(is_simulated, 0) = 0",
+      reembolso: "action = 'revoked'",
+      ignorado: "action IN ('ignored', 'not_found')",
+      erro: "action IN ('error', 'auth_error')",
+      simulado: "COALESCE(is_simulated, 0) = 1",
+    };
+    if (statusFilters[status]) clauses.push(statusFilters[status]);
+    else if (status) { clauses.push("action = ?"); params.push(status); }
+    if (q) {
+      clauses.push("(lower(COALESCE(buyer_email, '')) LIKE ? OR lower(COALESCE(buyer_name, '')) LIKE ? OR lower(COALESCE(transaction_id, '')) LIKE ? OR lower(COALESCE(license_key, '')) LIKE ? OR lower(COALESCE(event_name, '')) LIKE ?)");
+      const like = `%${q}%`;
+      params.push(like, like, like, like, like);
     }
 
-    if (provider === "hotmart") {
-      const hottok = String(req.headers["x-hotmart-hottok"] || req.body?.hottok || "");
-      if (!secrets.hotmart || !timingSafeEqualString(hottok, secrets.hotmart)) {
-        return res.status(401).json({ error: "invalid_hotmart_hottok" });
-      }
-    } else if (provider === "kiwify") {
-      const sig = String(req.headers["x-kiwify-signature"] || req.query.signature || req.body?.signature || "");
-      const tok = String(req.headers["x-kiwify-token"] || req.body?.token || "");
-      const hmacOk =
-        secrets.kiwify &&
-        req.rawBody &&
-        timingSafeEqualString(sig, crypto.createHmac("sha1", secrets.kiwify).update(req.rawBody).digest("hex"));
-      const tokenOk = secrets.kiwify && timingSafeEqualString(tok, secrets.kiwify);
-      if (!hmacOk && !tokenOk) {
-        return res.status(401).json({ error: "invalid_kiwify_signature" });
-      }
-    } else if (provider === "ticto") {
-      const tok = String(req.headers["x-ticto-token"] || req.body?.token || "");
-      if (!secrets.ticto || !timingSafeEqualString(tok, secrets.ticto)) {
-        return res.status(401).json({ error: "invalid_ticto_token" });
-      }
-    } else if (provider === "stripe") {
-      if (!verifyStripeSignature(req.rawBody, req.headers["stripe-signature"], secrets.stripe)) {
-        return res.status(401).json({ error: "invalid_stripe_signature" });
-      }
+    const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const total = hub.db.prepare(`SELECT COUNT(*) AS total FROM sales_webhook_deliveries ${whereSql};`).get(...params)?.total || 0;
+    const rows = hub.db
+      .prepare(
+        `SELECT id, delivery_key, provider, transaction_id, event_name, buyer_email, buyer_name, buyer_phone,
+                action, license_key, plan_tier, amount_cents, currency, payment_method, http_status,
+                error_detail, is_simulated, replay_count, replayed_at, processed_at
+         FROM sales_webhook_deliveries ${whereSql} ORDER BY processed_at DESC LIMIT ? OFFSET ?;`,
+      )
+      .all(...params, limit, offset);
+    return res.json({ ok: true, total, deliveries: rows.map((r) => ({ ...r, status_label: mapStatusLabel(r) })) });
+  });
+
+  router.get("/admin/webhooks/deliveries/:id", hub.requireAdmin, (req, res) => {
+    const idOrKey = String(req.params.id || "").trim();
+    const row = hub.db.prepare(`SELECT * FROM sales_webhook_deliveries WHERE id = ? OR delivery_key = ? LIMIT 1;`).get(idOrKey, idOrKey);
+    if (!row) return res.status(404).json({ error: "not_found" });
+    return res.json({
+      ok: true,
+      delivery: { ...row, status_label: mapStatusLabel(row), raw_payload: parseJsonSafe(row.raw_payload_json, null), summary: parseJsonSafe(row.summary_json, {}) },
+    });
+  });
+
+  router.post("/admin/webhooks/deliveries/:id/replay", hub.requireAdmin, async (req, res) => {
+    const idOrKey = String(req.params.id || "").trim();
+    const row = hub.db.prepare(`SELECT * FROM sales_webhook_deliveries WHERE id = ? OR delivery_key = ? LIMIT 1;`).get(idOrKey, idOrKey);
+    if (!row) return res.status(404).json({ error: "not_found" });
+
+    const rawObj = parseJsonSafe(row.raw_payload_json, null);
+    const summaryObj = parseJsonSafe(row.summary_json, {});
+    const parsed = rawObj
+      ? parseWebhookPayload(row.provider, rawObj)
+      : {
+          eventName: row.event_name, transactionId: row.transaction_id, buyerEmail: row.buyer_email || "",
+          buyerName: row.buyer_name || "", buyerPhone: row.buyer_phone || "",
+          productId: row.product_id || summaryObj.productId || "", offerName: row.offer_name || summaryObj.offerName || "",
+          amountCents: row.amount_cents || 0, currency: row.currency || "BRL", paymentMethod: row.payment_method || null,
+        };
+
+    if (!parsed.buyerEmail) return res.status(422).json({ error: "missing_buyer_email", message: "Entrega sem e-mail de comprador para reprocessar." });
+
+    const result = await processSaleEvent({
+      provider: row.provider, ...parsed, rawPayload: rawObj, isSimulated: Boolean(row.is_simulated), allowReplay: true, replayOfId: row.id,
+    });
+    const updated = hub.db.prepare(`SELECT * FROM sales_webhook_deliveries WHERE id = ?;`).get(row.id);
+    return res.json({ ok: true, replayed: true, result, delivery: { ...updated, status_label: mapStatusLabel(updated) } });
+  });
+
+  router.post("/webhooks/sales", async (req, res) => {
+    const secrets = getWebhookSettings();
+    const provider = detectProvider(req);
+    if (!SUPPORTED_PROVIDERS.includes(provider)) return res.status(400).json({ error: "unsupported_provider" });
+
+    const authCheck = verifyProviderSignature({ provider, req, secrets, timingSafeEqualString });
+    if (!authCheck.ok) {
+      recordWebhookFailure({ provider, body: req.body, parsed: null, httpStatus: 401, action: "auth_error", errorDetail: authCheck.error });
+      return res.status(401).json({ error: authCheck.error });
     }
 
     const body = req.body || {};
-    let eventName = "";
-    let transactionId = "";
-    let buyerEmail = "";
-    let buyerName = "";
-    let buyerPhone = "";
-    let productId = "";
-    let offerName = "";
-
-    if (provider === "hotmart") {
-      eventName = String(body.event || "").toUpperCase();
-      transactionId = String(body.data?.purchase?.transaction || body.id || "");
-      buyerEmail = String(body.data?.buyer?.email || "");
-      buyerName = String(body.data?.buyer?.name || "");
-      buyerPhone = String(body.data?.buyer?.checkout_phone || body.data?.buyer?.phone || "");
-      productId = String(body.data?.product?.id || "");
-      offerName = String(body.data?.product?.name || body.data?.purchase?.offer?.code || "");
-    } else if (provider === "kiwify") {
-      eventName = String(body.webhook_event_type || body.order_status || "").toLowerCase();
-      transactionId = String(body.order_id || "");
-      buyerEmail = String(body.Customer?.email || body.customer?.email || "");
-      buyerName = String(body.Customer?.full_name || body.customer?.name || "");
-      buyerPhone = String(body.Customer?.mobile || body.Customer?.phone || body.customer?.mobile || body.customer?.phone || "");
-      productId = String(body.Product?.product_id || body.product_id || "");
-      offerName = String(body.Product?.product_name || body.product_name || "");
-    } else if (provider === "ticto") {
-      eventName = String(body.status || body.event || "").toLowerCase();
-      transactionId = String(body.order?.hash || body.transaction_id || "");
-      buyerEmail = String(body.customer?.email || "");
-      buyerName = String(body.customer?.name || "");
-      const phoneObj = body.customer?.phone;
-      buyerPhone =
-        typeof phoneObj === "string"
-          ? phoneObj
-          : String(phoneObj?.full_number || `${phoneObj?.ddi || ""}${phoneObj?.ddd || ""}${phoneObj?.number || ""}`);
-      productId = String(body.item?.product_id || body.product_id || "");
-      offerName = String(body.item?.offer_name || body.offer_name || "");
-    } else if (provider === "stripe") {
-      eventName = String(body.type || "").toLowerCase();
-      const obj = body.data?.object || {};
-      transactionId = String(body.id || obj.id || "");
-      buyerEmail = String(obj.customer_details?.email || obj.customer_email || obj.receipt_email || "");
-      buyerName = String(obj.customer_details?.name || "");
-      buyerPhone = String(obj.customer_details?.phone || "");
-      productId = String(obj.metadata?.product_id || "");
-      offerName = String(obj.metadata?.plan_name || "");
+    const parsed = parseWebhookPayload(provider, body);
+    try {
+      if (classifyWebhookEvent(parsed.eventName) === "approved" && !parsed.buyerEmail) {
+        const id = recordWebhookFailure({ provider, body, parsed, httpStatus: 422, action: "error", errorDetail: "missing_buyer_email" });
+        return res.status(422).json({ error: "missing_buyer_email", id });
+      }
+      return res.json(await processSaleEvent({ provider, ...parsed, rawPayload: body }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const id = recordWebhookFailure({ provider, body, parsed, httpStatus: 500, action: "error", errorDetail: msg });
+      return res.status(500).json({ error: "webhook_processing_error", message: msg, id });
     }
-
-    const result = await processSaleEvent({
-      provider,
-      eventName,
-      transactionId,
-      buyerEmail,
-      buyerName,
-      buyerPhone,
-      productId,
-      offerName,
-    });
-    return res.json(result);
   });
 
   return router;

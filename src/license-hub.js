@@ -5,10 +5,14 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PainelVaultStore } from "./vault-store.js";
 import { createAuthService } from "./auth-service.js";
-import { createEmailDispatcher } from "./email-dispatcher.js";
+import { buildLicenseEmailPayload, createEmailDispatcher } from "./email-dispatcher.js";
 import { createWhatsAppDispatcher } from "./whatsapp-dispatcher.js";
 import { createServerClaimsRouter } from "./server-claims.js";
 import { createReleasesFeedRouter } from "./releases-feed.js";
+import { ensureSchemaAndMigrations } from "./db-migrations.js";
+import { createAnalyticsService } from "./analytics-service.js";
+import { createLicenseAdminRouter } from "./license-admin-routes.js";
+import { parseMoneyToCents, normalizePaymentMethod } from "./webhook-parsers.js";
 
 export const PLAN_MATRIX = {
   individual: {
@@ -122,97 +126,7 @@ function resolveSigningKeys({ privateKeyPem, publicKeyPem, dataDir }) {
 function initDatabase(dbPath) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS admin_users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS painel_settings (
-      setting_key TEXT PRIMARY KEY,
-      setting_value TEXT NOT NULL,
-      is_secret INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS licenses (
-      id TEXT PRIMARY KEY,
-      license_key TEXT NOT NULL UNIQUE,
-      customer_email TEXT NOT NULL,
-      customer_name TEXT,
-      customer_phone TEXT,
-      plan_tier TEXT NOT NULL CHECK(plan_tier IN ('individual', 'agencia_10', 'agencia_ilimitada')),
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suspended', 'revoked', 'expired')),
-      max_servers INTEGER NOT NULL,
-      max_machines INTEGER NOT NULL,
-      custom_max_machines INTEGER,
-      upgrades_json TEXT NOT NULL DEFAULT '[]',
-      expires_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_licenses_email ON licenses(lower(customer_email));
-
-    CREATE TABLE IF NOT EXISTS license_machines (
-      id TEXT PRIMARY KEY,
-      license_id TEXT NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
-      machine_id TEXT NOT NULL,
-      hostname TEXT NOT NULL,
-      os_platform TEXT NOT NULL,
-      app_version TEXT,
-      first_activated_at TEXT NOT NULL,
-      last_heartbeat_at TEXT NOT NULL,
-      revoked_at TEXT,
-      UNIQUE(license_id, machine_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_license_machines_active ON license_machines(license_id, revoked_at);
-
-    CREATE TABLE IF NOT EXISTS license_events (
-      id TEXT PRIMARY KEY,
-      license_id TEXT NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
-      event_type TEXT NOT NULL,
-      actor TEXT NOT NULL,
-      details_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_license_events_type_date ON license_events(license_id, event_type, created_at);
-
-    CREATE TABLE IF NOT EXISTS sales_webhook_deliveries (
-      delivery_key TEXT PRIMARY KEY,
-      provider TEXT NOT NULL,
-      transaction_id TEXT NOT NULL,
-      event_name TEXT NOT NULL,
-      buyer_email TEXT,
-      buyer_phone TEXT,
-      action TEXT,
-      license_key TEXT,
-      summary_json TEXT,
-      processed_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS notification_logs (
-      id TEXT PRIMARY KEY,
-      license_id TEXT,
-      license_key TEXT,
-      channel TEXT NOT NULL CHECK(channel IN ('email', 'whatsapp')),
-      recipient TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('sent', 'error', 'skipped')),
-      detail TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_notification_logs_created ON notification_logs(created_at DESC);
-  `);
+  ensureSchemaAndMigrations(db);
   return db;
 }
 
@@ -265,6 +179,12 @@ export function createLicenseHub(options = {}) {
     fetchImpl: options.fetchImpl,
   });
 
+  const analyticsService = createAnalyticsService({
+    db,
+    vault,
+    requireAdmin: auth.requireAdmin,
+  });
+
   function signCertificate(licenseRow, machineId) {
     const now = new Date();
     const graceUntil = new Date(now.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
@@ -287,9 +207,7 @@ export function createLicenseHub(options = {}) {
       expires_at: licenseRow.expires_at ?? null,
     };
     const canonical = canonicalizePayload(payload);
-    const signature = crypto
-      .sign(null, Buffer.from(canonical, "utf8"), keys.privateKeyPem)
-      .toString("base64url");
+    const signature = crypto.sign(null, Buffer.from(canonical, "utf8"), keys.privateKeyPem).toString("base64url");
     return { payload, signature, key_id: keys.keyId };
   }
 
@@ -297,15 +215,10 @@ export function createLicenseHub(options = {}) {
     const rows = db
       .prepare(
         `SELECT machine_id, hostname, os_platform, app_version, first_activated_at, last_heartbeat_at
-         FROM license_machines
-         WHERE license_id = ? AND revoked_at IS NULL
-         ORDER BY last_heartbeat_at DESC;`,
+         FROM license_machines WHERE license_id = ? AND revoked_at IS NULL ORDER BY last_heartbeat_at DESC;`,
       )
       .all(licenseId);
-    return rows.map((row) => ({
-      ...row,
-      is_current_machine: currentMachineId ? row.machine_id === currentMachineId : false,
-    }));
+    return rows.map((row) => ({ ...row, is_current_machine: currentMachineId ? row.machine_id === currentMachineId : false }));
   }
 
   function logEvent(licenseId, eventType, actor, details = {}) {
@@ -339,6 +252,12 @@ export function createLicenseHub(options = {}) {
     provider = "manual",
     transactionId = "",
     forceNew = false,
+    amountCents = 0,
+    currency = "BRL",
+    paymentMethod = null,
+    sourceProvider = null,
+    isSimulated = false,
+    notes = null,
   }) {
     const cleanEmail = String(email || "").trim().toLowerCase();
     if (!cleanEmail) throw new Error("E-mail do comprador é obrigatório.");
@@ -347,6 +266,10 @@ export function createLicenseHub(options = {}) {
     const planMeta = PLAN_MATRIX[safePlan];
     const normalizedNewUpgrades = normalizeUpgrades(addUpgrades);
     const nowIso = new Date().toISOString();
+    const safeAmountCents = Math.max(0, Math.round(Number(amountCents) || 0));
+    const safeCurrency = String(currency || "BRL").toUpperCase();
+    const safeProvider = sourceProvider || (provider === "admin" ? "manual" : provider) || "manual";
+    const simInt = isSimulated ? 1 : 0;
 
     const existing = forceNew
       ? null
@@ -358,17 +281,23 @@ export function createLicenseHub(options = {}) {
           .get(cleanEmail);
 
     if (existing) {
-      const mergedUpgrades = Array.from(
-        new Set([...parseUpgradesJson(existing.upgrades_json), ...normalizedNewUpgrades]),
-      );
+      const mergedUpgrades = Array.from(new Set([...parseUpgradesJson(existing.upgrades_json), ...normalizedNewUpgrades]));
       const nextPlan = PLAN_MATRIX[planTier] && planTier !== "individual" ? planTier : existing.plan_tier;
       const nextMeta = PLAN_MATRIX[nextPlan];
+      const nextSim = existing.is_simulated === 0 ? 0 : simInt;
       db.prepare(
         `UPDATE licenses
          SET plan_tier = ?, max_servers = ?, max_machines = ?, upgrades_json = ?,
              customer_name = COALESCE(NULLIF(?, ''), customer_name),
              customer_phone = COALESCE(NULLIF(?, ''), customer_phone),
-             status = 'active', expires_at = COALESCE(?, expires_at), updated_at = ?
+             status = 'active', expires_at = COALESCE(?, expires_at),
+             amount_cents = CASE WHEN ? > 0 THEN ? ELSE COALESCE(amount_cents, 0) END,
+             currency = COALESCE(NULLIF(?, ''), currency),
+             payment_method = COALESCE(?, payment_method),
+             source_provider = COALESCE(NULLIF(?, ''), source_provider),
+             is_simulated = ?,
+             notes = COALESCE(?, notes),
+             updated_at = ?
          WHERE id = ?;`,
       ).run(
         nextPlan,
@@ -378,6 +307,13 @@ export function createLicenseHub(options = {}) {
         customerName || "",
         cleanPhone,
         expiresAt,
+        safeAmountCents,
+        safeAmountCents,
+        safeCurrency,
+        paymentMethod,
+        safeProvider,
+        nextSim,
+        notes,
         nowIso,
         existing.id,
       );
@@ -390,8 +326,9 @@ export function createLicenseHub(options = {}) {
     db.prepare(
       `INSERT INTO licenses (
         id, license_key, customer_email, customer_name, customer_phone, plan_tier, status,
-        max_servers, max_machines, custom_max_machines, upgrades_json, expires_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?, ?, ?);`,
+        max_servers, max_machines, custom_max_machines, upgrades_json, expires_at,
+        amount_cents, currency, payment_method, source_provider, is_simulated, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
     ).run(
       id,
       licenseKey,
@@ -403,6 +340,12 @@ export function createLicenseHub(options = {}) {
       planMeta.max_machines,
       JSON.stringify(normalizedNewUpgrades),
       expiresAt,
+      safeAmountCents,
+      safeCurrency,
+      paymentMethod,
+      safeProvider,
+      simInt,
+      notes,
       nowIso,
       nowIso,
     );
@@ -427,25 +370,18 @@ export function createLicenseHub(options = {}) {
 
   async function dispatchLicenseNotifications(license, { sendEmail = true, sendWhatsApp = true } = {}) {
     const results = { email: null, whatsapp: null };
-    if (sendEmail && license.customer_email) {
-      results.email = await emailDispatcher.sendLicenseEmail(license);
-    }
-    if (sendWhatsApp && license.customer_phone) {
-      results.whatsapp = await whatsappDispatcher.sendLicenseWhatsApp(license);
-    }
+    if (sendEmail && license.customer_email) results.email = await emailDispatcher.sendLicenseEmail(license);
+    if (sendWhatsApp && license.customer_phone) results.whatsapp = await whatsappDispatcher.sendLicenseWhatsApp(license);
     return results;
   }
 
   const router = express.Router();
 
-  // ─── Autenticação Web do Painel ────────────────────────────────────────────
   router.post("/auth/login", (req, res) => {
     const { email, password } = req.body || {};
     const clientIp = req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown";
     const result = auth.authenticateCredentials(email, password, clientIp);
-    if (!result.ok) {
-      return res.status(result.status).json({ error: result.error, message: result.message });
-    }
+    if (!result.ok) return res.status(result.status).json({ error: result.error, message: result.message });
     auth.setSessionCookie(res, result.token, req);
     return res.json({ ok: true, user: result.user });
   });
@@ -468,7 +404,6 @@ export function createLicenseHub(options = {}) {
     return res.json({ ok: true, message: "Senha alterada com sucesso." });
   });
 
-  // ─── API Pública de Licenças (consumida pelos Apps Desktop/VPS dos clientes)
   router.get("/licenses/public-key", (_req, res) => {
     res.json({ key_id: keys.keyId, public_key_pem: keys.publicKeyPem });
   });
@@ -476,11 +411,9 @@ export function createLicenseHub(options = {}) {
   router.post("/licenses/activate", (req, res) => {
     const { license_key, email, machine_id, hostname = "computador", os_platform = "unknown", app_version = "1.0.0" } =
       req.body || {};
-
     if (!license_key || !email || !machine_id) {
       return res.status(400).json({ error: "missing_fields", message: "Chave de licença, e-mail e machine_id são obrigatórios." });
     }
-
     const row = findLicenseByKey(license_key);
     if (!row || row.customer_email.toLowerCase() !== String(email).trim().toLowerCase()) {
       return res.status(404).json({ error: "invalid_credentials", message: "Chave de licença ou e-mail não encontrado." });
@@ -493,10 +426,7 @@ export function createLicenseHub(options = {}) {
     }
 
     const nowIso = new Date().toISOString();
-    const existingMachine = db
-      .prepare(`SELECT * FROM license_machines WHERE license_id = ? AND machine_id = ?;`)
-      .get(row.id, machine_id);
-
+    const existingMachine = db.prepare(`SELECT * FROM license_machines WHERE license_id = ? AND machine_id = ?;`).get(row.id, machine_id);
     const activeDevices = listActiveDevices(row.id, machine_id);
     const maxMachines = row.custom_max_machines ?? row.max_machines;
 
@@ -509,320 +439,74 @@ export function createLicenseHub(options = {}) {
           active_machines: activeDevices,
         });
       }
-
       if (existingMachine) {
         db.prepare(
-          `UPDATE license_machines
-           SET revoked_at = NULL, hostname = ?, os_platform = ?, app_version = ?, last_heartbeat_at = ?
-           WHERE id = ?;`,
+          `UPDATE license_machines SET revoked_at = NULL, hostname = ?, os_platform = ?, app_version = ?, last_heartbeat_at = ? WHERE id = ?;`,
         ).run(String(hostname), String(os_platform), String(app_version), nowIso, existingMachine.id);
       } else {
         db.prepare(
-          `INSERT INTO license_machines (
-            id, license_id, machine_id, hostname, os_platform, app_version, first_activated_at, last_heartbeat_at, revoked_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
-        ).run(
-          crypto.randomUUID(),
-          row.id,
-          String(machine_id),
-          String(hostname),
-          String(os_platform),
-          String(app_version),
-          nowIso,
-          nowIso,
-        );
+          `INSERT INTO license_machines (id, license_id, machine_id, hostname, os_platform, app_version, first_activated_at, last_heartbeat_at, revoked_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+        ).run(crypto.randomUUID(), row.id, String(machine_id), String(hostname), String(os_platform), String(app_version), nowIso, nowIso);
       }
       logEvent(row.id, "machine_activated", "client", { machine_id, hostname, os_platform });
     } else {
-      db.prepare(
-        `UPDATE license_machines SET hostname = ?, os_platform = ?, app_version = ?, last_heartbeat_at = ? WHERE id = ?;`,
-      ).run(String(hostname), String(os_platform), String(app_version), nowIso, existingMachine.id);
+      db.prepare(`UPDATE license_machines SET hostname = ?, os_platform = ?, app_version = ?, last_heartbeat_at = ? WHERE id = ?;`).run(
+        String(hostname), String(os_platform), String(app_version), nowIso, existingMachine.id,
+      );
     }
-
-    const certificate = signCertificate(row, String(machine_id));
-    const devices = listActiveDevices(row.id, String(machine_id));
-    return res.json({ ok: true, certificate, devices });
+    return res.json({ ok: true, certificate: signCertificate(row, String(machine_id)), devices: listActiveDevices(row.id, String(machine_id)) });
   });
 
   router.post("/licenses/heartbeat", (req, res) => {
     const { license_key, machine_id, app_version } = req.body || {};
     if (!license_key || !machine_id) return res.status(400).json({ error: "missing_fields" });
-
     const row = findLicenseByKey(license_key);
     if (!row) return res.status(404).json({ error: "not_found" });
-    if (row.status === "revoked" || row.status === "suspended") {
-      return res.status(403).json({ error: "revoked", message: "Licença revogada." });
-    }
-    if (row.status === "expired" || isLicenseExpired(row)) {
-      return res.status(403).json({ error: "expired", message: "Licença expirada." });
-    }
+    if (row.status === "revoked" || row.status === "suspended") return res.status(403).json({ error: "revoked", message: "Licença revogada." });
+    if (row.status === "expired" || isLicenseExpired(row)) return res.status(403).json({ error: "expired", message: "Licença expirada." });
 
-    const device = db
-      .prepare(`SELECT * FROM license_machines WHERE license_id = ? AND machine_id = ? AND revoked_at IS NULL;`)
-      .get(row.id, String(machine_id));
-    if (!device) {
-      return res.status(403).json({ error: "machine_unlinked", message: "Este dispositivo foi desvinculado da licença." });
-    }
+    const device = db.prepare(`SELECT * FROM license_machines WHERE license_id = ? AND machine_id = ? AND revoked_at IS NULL;`).get(row.id, String(machine_id));
+    if (!device) return res.status(403).json({ error: "machine_unlinked", message: "Este dispositivo foi desvinculado da licença." });
 
-    const nowIso = new Date().toISOString();
     db.prepare(`UPDATE license_machines SET last_heartbeat_at = ?, app_version = COALESCE(?, app_version) WHERE id = ?;`).run(
-      nowIso,
-      app_version ? String(app_version) : null,
-      device.id,
+      new Date().toISOString(), app_version ? String(app_version) : null, device.id,
     );
-
-    const certificate = signCertificate(row, String(machine_id));
-    const devices = listActiveDevices(row.id, String(machine_id));
-    return res.json({ ok: true, certificate, devices });
+    return res.json({ ok: true, certificate: signCertificate(row, String(machine_id)), devices: listActiveDevices(row.id, String(machine_id)) });
   });
 
   router.post("/licenses/deactivate", (req, res) => {
     const { license_key, email, target_machine_id } = req.body || {};
-    if (!license_key || !email || !target_machine_id) {
-      return res.status(400).json({ error: "missing_fields" });
-    }
-
+    if (!license_key || !email || !target_machine_id) return res.status(400).json({ error: "missing_fields" });
     const row = findLicenseByKey(license_key);
     if (!row || row.customer_email.toLowerCase() !== String(email).trim().toLowerCase()) {
       return res.status(404).json({ error: "invalid_credentials" });
     }
-
     const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const unlinkCountRow = db
-      .prepare(
-        `SELECT COUNT(*) AS total FROM license_events
-         WHERE license_id = ? AND event_type = 'device_deactivated' AND actor = 'client' AND created_at >= ?;`,
-      )
-      .get(row.id, since30d);
-
-    if (Number(unlinkCountRow?.total || 0) >= SELF_UNLINK_LIMIT_30D) {
-      return res.status(429).json({
-        error: "unlink_limit_reached",
-        message: "Limite mensal de 2 trocas self-service de computador atingido. Contate o suporte.",
-      });
+    const unlinkCount = db.prepare(`SELECT COUNT(*) AS total FROM license_events WHERE license_id = ? AND event_type = 'device_deactivated' AND actor = 'client' AND created_at >= ?;`).get(row.id, since30d)?.total || 0;
+    if (Number(unlinkCount) >= SELF_UNLINK_LIMIT_30D) {
+      return res.status(429).json({ error: "unlink_limit_reached", message: "Limite mensal de 2 trocas self-service de computador atingido. Contate o suporte." });
     }
-
-    const nowIso = new Date().toISOString();
-    const result = db
-      .prepare(
-        `UPDATE license_machines SET revoked_at = ? WHERE license_id = ? AND machine_id = ? AND revoked_at IS NULL;`,
-      )
-      .run(nowIso, row.id, String(target_machine_id));
-
-    if (result.changes > 0) {
-      logEvent(row.id, "device_deactivated", "client", { target_machine_id });
-    }
-
-    const devices = listActiveDevices(row.id);
-    return res.json({ ok: true, removed: result.changes > 0, devices });
-  });
-
-  // ─── Rotas Administrativas Protegidas (Painel Web + API Bearer) ───────────
-  router.get("/admin/overview", auth.requireAdmin, (_req, res) => {
-    const totalLicenses = db.prepare(`SELECT COUNT(*) AS total FROM licenses;`).get()?.total || 0;
-    const activeLicenses = db.prepare(`SELECT COUNT(*) AS total FROM licenses WHERE status = 'active';`).get()?.total || 0;
-    const activeMachines = db.prepare(`SELECT COUNT(*) AS total FROM license_machines WHERE revoked_at IS NULL;`).get()?.total || 0;
-    const webhooksCount = db.prepare(`SELECT COUNT(*) AS total FROM sales_webhook_deliveries;`).get()?.total || 0;
-    const emailsSent = db.prepare(`SELECT COUNT(*) AS total FROM notification_logs WHERE channel = 'email' AND status = 'sent';`).get()?.total || 0;
-    const waSent = db.prepare(`SELECT COUNT(*) AS total FROM notification_logs WHERE channel = 'whatsapp' AND status = 'sent';`).get()?.total || 0;
-
-    return res.json({
-      stats: { totalLicenses, activeLicenses, activeMachines, webhooksCount, emailsSent, waSent },
-      publicKeyPem: keys.publicKeyPem,
-      keyId: keys.keyId,
-    });
-  });
-
-  router.get("/admin/licenses", auth.requireAdmin, (req, res) => {
-    const q = String(req.query.q || "").trim().toLowerCase();
-    const rows = q
-      ? db
-          .prepare(
-            `SELECT * FROM licenses WHERE lower(customer_email) LIKE ? OR lower(license_key) LIKE ? OR lower(COALESCE(customer_name, '')) LIKE ? ORDER BY created_at DESC LIMIT 200;`,
-          )
-          .all(`%${q}%`, `%${q}%`, `%${q}%`)
-      : db.prepare(`SELECT * FROM licenses ORDER BY created_at DESC LIMIT 200;`).all();
-
-    return res.json({
-      licenses: rows.map((row) => ({
-        ...row,
-        upgrades: parseUpgradesJson(row.upgrades_json),
-        devices: listActiveDevices(row.id),
-      })),
-    });
-  });
-
-  router.post("/admin/licenses", auth.requireAdmin, async (req, res) => {
-    const {
-      email,
-      customer_name = "",
-      customer_phone = "",
-      plan_tier = "individual",
-      upgrades = [],
-      custom_max_machines = null,
-      expires_at = null,
-      force_new = false,
-      send_email = false,
-      send_whatsapp = false,
-    } = req.body || {};
-
-    if (!email) return res.status(400).json({ error: "missing_email", message: "E-mail do cliente é obrigatório." });
-
-    const created = issueOrUpdateLicenseFromSale({
-      email,
-      customerName: customer_name,
-      customerPhone: customer_phone,
-      planTier: plan_tier,
-      addUpgrades: upgrades,
-      expiresAt: expires_at || null,
-      provider: "admin",
-      transactionId: `adm_${Date.now()}`,
-      forceNew: Boolean(force_new),
-    });
-
-    if (custom_max_machines !== null && custom_max_machines !== "" && Number.isInteger(Number(custom_max_machines))) {
-      db.prepare(`UPDATE licenses SET custom_max_machines = ?, updated_at = ? WHERE id = ?;`).run(
-        Number(custom_max_machines),
-        new Date().toISOString(),
-        created.id,
-      );
-    }
-
-    const refreshed = findLicenseByKey(created.license_key);
-    const notifications = await dispatchLicenseNotifications(refreshed, {
-      sendEmail: Boolean(send_email),
-      sendWhatsApp: Boolean(send_whatsapp),
-    });
-
-    return res.status(201).json({
-      ok: true,
-      license: {
-        ...refreshed,
-        devices: listActiveDevices(refreshed.id),
-      },
-      notifications,
-    });
-  });
-
-  router.post("/admin/licenses/:key/send-notifications", auth.requireAdmin, async (req, res) => {
-    const lic = findLicenseByKey(req.params.key);
-    if (!lic) return res.status(404).json({ error: "not_found" });
-    const { send_email = true, send_whatsapp = true, override_email, override_phone } = req.body || {};
-    if (override_phone) {
-      db.prepare(`UPDATE licenses SET customer_phone = ?, updated_at = ? WHERE id = ?;`).run(
-        String(override_phone).trim(),
-        new Date().toISOString(),
-        lic.id,
-      );
-    }
-    const target = {
-      ...findLicenseByKey(lic.license_key),
-      ...(override_email ? { customer_email: String(override_email).trim() } : {}),
-      ...(override_phone ? { customer_phone: String(override_phone).trim() } : {}),
-    };
-    const notifications = await dispatchLicenseNotifications(target, {
-      sendEmail: Boolean(send_email),
-      sendWhatsApp: Boolean(send_whatsapp),
-    });
-    return res.json({ ok: true, notifications });
-  });
-
-  router.post("/admin/licenses/:key/revoke", auth.requireAdmin, (req, res) => {
-    const revoked = revokeLicenseByEmailOrKey({
-      licenseKey: req.params.key,
-      reason: req.body?.reason || "admin_revoked",
-      actor: "admin",
-    });
-    if (!revoked) return res.status(404).json({ error: "not_found" });
-    return res.json({ ok: true, status: revoked.status });
-  });
-
-  router.post("/admin/licenses/:key/reactivate", auth.requireAdmin, (req, res) => {
-    const row = findLicenseByKey(req.params.key);
-    if (!row) return res.status(404).json({ error: "not_found" });
-    db.prepare(`UPDATE licenses SET status = 'active', updated_at = ? WHERE id = ?;`).run(
-      new Date().toISOString(),
-      row.id,
+    const result = db.prepare(`UPDATE license_machines SET revoked_at = ? WHERE license_id = ? AND machine_id = ? AND revoked_at IS NULL;`).run(
+      new Date().toISOString(), row.id, String(target_machine_id),
     );
-    logEvent(row.id, "license_reactivated", "admin", {});
-    return res.json({ ok: true, status: "active" });
+    if (result.changes > 0) logEvent(row.id, "device_deactivated", "client", { target_machine_id });
+    return res.json({ ok: true, removed: result.changes > 0, devices: listActiveDevices(row.id) });
   });
 
-  router.post("/admin/licenses/:key/reset-machines", auth.requireAdmin, (req, res) => {
-    const row = findLicenseByKey(req.params.key);
-    if (!row) return res.status(404).json({ error: "not_found" });
-    const nowIso = new Date().toISOString();
-    db.prepare(`UPDATE license_machines SET revoked_at = ? WHERE license_id = ? AND revoked_at IS NULL;`).run(
-      nowIso,
-      row.id,
-    );
-    logEvent(row.id, "machines_reset", "admin", {});
-    return res.json({ ok: true, devices: [] });
-  });
-
-  // ─── Configurações E-mail, WhatsApp, Webhooks e Logs no Painel ─────────────
-  router.get("/admin/notifications/config", auth.requireAdmin, (_req, res) => {
-    return res.json({
-      email: emailDispatcher.getPublicConfig(),
-      whatsapp: whatsappDispatcher.getPublicConfig(),
-    });
-  });
-
-  router.put("/admin/notifications/email-config", auth.requireAdmin, (req, res) => {
-    const updated = emailDispatcher.saveConfig(req.body || {});
-    return res.json({ ok: true, email: updated });
-  });
-
-  router.post("/admin/notifications/test-email", auth.requireAdmin, async (req, res) => {
-    const to = String(req.body?.to || req.adminSession.email || "").trim();
-    if (!to) return res.status(400).json({ error: "missing_email" });
-    const result = await emailDispatcher.sendTestEmail(to);
-    return res.status(result.ok ? 200 : 400).json(result);
-  });
-
-  router.put("/admin/notifications/whatsapp-config", auth.requireAdmin, (req, res) => {
-    const updated = whatsappDispatcher.saveConfig(req.body || {});
-    return res.json({ ok: true, whatsapp: updated });
-  });
-
-  router.post("/admin/notifications/test-whatsapp", auth.requireAdmin, async (req, res) => {
-    const phone = String(req.body?.phone || "").trim();
-    if (!phone) return res.status(400).json({ error: "missing_phone", message: "Informe o telefone com DDD." });
-    const result = await whatsappDispatcher.sendTestWhatsApp(phone);
-    return res.status(result.ok ? 200 : 400).json(result);
-  });
-
-  router.get("/admin/notifications/logs", auth.requireAdmin, (_req, res) => {
-    const logs = db
-      .prepare(`SELECT * FROM notification_logs ORDER BY created_at DESC LIMIT 100;`)
-      .all();
-    return res.json({ logs });
-  });
-
-  router.get("/admin/webhooks/history", auth.requireAdmin, (_req, res) => {
-    const deliveries = db
-      .prepare(`SELECT * FROM sales_webhook_deliveries ORDER BY processed_at DESC LIMIT 100;`)
-      .all();
-    return res.json({ deliveries });
-  });
+  router.use(
+    createLicenseAdminRouter({
+      db, keys, emailDispatcher, whatsappDispatcher, analyticsService, PLAN_MATRIX, parseUpgradesJson, normalizeUpgrades,
+      listActiveDevices, findLicenseByKey, logEvent, issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey,
+      dispatchLicenseNotifications, buildLicenseEmailPayload, parseMoneyToCents, normalizePaymentMethod, requireAdmin: auth.requireAdmin,
+    }),
+  );
+  router.use(analyticsService.router);
 
   const hubApi = {
-    router,
-    db,
-    vault,
-    auth,
-    keys,
-    emailDispatcher,
-    whatsappDispatcher,
-    logNotification,
-    dispatchLicenseNotifications,
-    findLicenseByKey,
-    listActiveDevices,
-    signCertificate,
-    issueOrUpdateLicenseFromSale,
-    revokeLicenseByEmailOrKey,
-    requireAdmin: auth.requireAdmin,
-    close: () => db.close(),
+    router, db, vault, auth, keys, emailDispatcher, whatsappDispatcher, analyticsService,
+    logNotification, dispatchLicenseNotifications, findLicenseByKey, listActiveDevices, signCertificate,
+    issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey, requireAdmin: auth.requireAdmin, close: () => db.close(),
   };
 
   router.use(createServerClaimsRouter(hubApi));
