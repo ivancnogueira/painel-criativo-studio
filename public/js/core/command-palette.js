@@ -53,6 +53,7 @@ function buildBaseItems() {
         window.open(
           `/api/admin/analytics/sales/export.csv?range=${encodeURIComponent(range)}&include_simulated=${Boolean(includeSimulated)}`,
           "_blank",
+          "noopener",
         );
       },
     },

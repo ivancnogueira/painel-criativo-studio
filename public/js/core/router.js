@@ -199,6 +199,7 @@ export function initRouterShell() {
   window.addEventListener("hashchange", () => {
     const next = getCurrentRoute();
     if (next !== store.get().route) {
+      currentParams = {};
       store.set({ route: next });
       void renderCurrentView();
     }

@@ -171,17 +171,23 @@ export function detectProvider(req) {
 
 function verifyStripeSignature(rawBody, headerValue, secret, timingSafeEqualString) {
   if (!secret || !headerValue || !rawBody) return false;
-  const parts = Object.fromEntries(
-    String(headerValue)
-      .split(",")
-      .map((kv) => kv.trim().split("=")),
-  );
-  if (!parts.t || !parts.v1) return false;
+  let timestamp = "";
+  const v1Signatures = [];
+  for (const segment of String(headerValue).split(",")) {
+    const idx = segment.indexOf("=");
+    if (idx <= 0) continue;
+    const k = segment.slice(0, idx).trim();
+    const v = segment.slice(idx + 1).trim();
+    if (k === "t" && !timestamp) timestamp = v;
+    if (k === "v1" && v) v1Signatures.push(v);
+  }
+  if (!timestamp || v1Signatures.length === 0) return false;
   const expected = crypto
     .createHmac("sha256", secret)
-    .update(`${parts.t}.${rawBody}`)
-    .digest("hex");
-  return timingSafeEqualString(String(parts.v1).toLowerCase(), expected.toLowerCase());
+    .update(`${timestamp}.${rawBody}`)
+    .digest("hex")
+    .toLowerCase();
+  return v1Signatures.some((sig) => timingSafeEqualString(sig.toLowerCase(), expected));
 }
 
 export function verifyProviderSignature({ provider, req, secrets, timingSafeEqualString }) {

@@ -463,6 +463,7 @@ registerView("webhooks", {
     root.querySelector("#del-filter-provider")?.addEventListener("change", (e) => { filterProvider = e.target.value; void loadDeliveries(); });
     root.querySelector("#del-filter-status")?.addEventListener("change", (e) => { filterStatus = e.target.value; void loadDeliveries(); });
     if (ctx.params?.focus === "simulate") { root.querySelector("#wh-sim-card")?.scrollIntoView({ behavior: "smooth", block: "start" }); root.querySelector("#sim-email")?.focus(); }
-    if (ctx.params?.inspectDeliveryId) void openDeliveryInspector(ctx.params.inspectDeliveryId, loadDeliveries);
+    const inspectId = ctx.params?.inspectDeliveryId || ctx.params?.deliveryId;
+    if (inspectId) void openDeliveryInspector(inspectId, loadDeliveries);
   },
 });

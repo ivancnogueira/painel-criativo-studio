@@ -293,7 +293,7 @@ function renderBreakdownCard(title, rows = [], totalRevenue = 0, currency = "BRL
             <div class="breakdown-row">
               <div class="row-between">
                 <span><strong>${escapeHtml(r.label)}</strong> <small class="muted">(${Number(r.count || 0)}x)</small></span>
-                <span class="tabular-nums"><strong>${escapeHtml(formatMoney(r.revenueCents || 0, currency))}</strong></span>
+                <span class="tabular-nums"><strong>${escapeHtml(formatMoney(r.revenueCents || 0, r.currency || currency))}</strong></span>
               </div>
               <div class="breakdown-bar-track"><div class="breakdown-bar-fill" style="width:${pct}%"></div></div>
             </div>`;
@@ -410,6 +410,7 @@ registerView("sales", {
       label: `${cur} (Líquido: ${formatMoney(vals.netCents || 0, cur)})`,
       revenueCents: vals.grossCents || 0,
       count: vals.count || 0,
+      currency: cur,
     }));
 
     root.innerHTML = `

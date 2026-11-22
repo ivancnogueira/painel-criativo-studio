@@ -14,10 +14,22 @@ import {
 
 const MAX_RAW_PAYLOAD_BYTES = 256 * 1024;
 
+const SENSITIVE_PAYLOAD_KEYS = new Set(["secret", "hottok", "token", "signature", "access_token"]);
+
+function redactSensitivePayload(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 5) return value;
+  if (Array.isArray(value)) return value.map((item) => redactSensitivePayload(item, depth + 1));
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = SENSITIVE_PAYLOAD_KEYS.has(k.toLowerCase()) ? "[REDACTED]" : redactSensitivePayload(v, depth + 1);
+  }
+  return out;
+}
+
 function serializeRawPayload(payload) {
   if (!payload || typeof payload !== "object") return null;
   try {
-    const json = JSON.stringify(payload);
+    const json = JSON.stringify(redactSensitivePayload(payload));
     return Buffer.byteLength(json, "utf8") <= MAX_RAW_PAYLOAD_BYTES
       ? json
       : JSON.stringify({ _truncated: true, preview: json.slice(0, MAX_RAW_PAYLOAD_BYTES - 128) });
@@ -63,7 +75,7 @@ export function createSalesWebhooksRouter(hub, options = {}) {
       cakto: options.caktoSecret ?? (hub.vault.getSetting("wh_cakto_secret", "") || process.env.CAKTO_WEBHOOK_SECRET || ""),
       kirvano: options.kirvanoToken ?? (hub.vault.getSetting("wh_kirvano_token", "") || process.env.KIRVANO_WEBHOOK_TOKEN || ""),
       generic: options.genericHmacSecret ?? (hub.vault.getSetting("wh_generic_hmac_secret", "") || process.env.GENERIC_WEBHOOK_HMAC_SECRET || ""),
-      productMap: options.productMap || (vaultMap && Object.keys(vaultMap).length > 0 ? vaultMap : envMap),
+      productMap: options.productMap || (vaultMap !== null && vaultMap !== undefined ? vaultMap : envMap),
     };
   }
 

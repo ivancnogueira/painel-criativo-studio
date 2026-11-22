@@ -42,7 +42,7 @@ function openQuickEditModal(lic, onSaved) {
               <option value="agencia_ilimitada" ${lic.plan_tier === "agencia_ilimitada" ? "selected" : ""}>Agência Ilimitada</option>
             </select>
           </label>
-          <label class="field"><span>Limite Custom PCs</span><input type="number" id="ed-max-machines" min="1" value="${lic.custom_max_machines ?? ""}" placeholder="Padrão" /></label>
+          <label class="field"><span>Limite Custom PCs</span><input type="number" id="ed-max-machines" min="1" value="${escapeHtml(lic.custom_max_machines ?? "")}" placeholder="Padrão" /></label>
           <label class="field"><span>Validade</span><input type="date" id="ed-expires" value="${escapeHtml(expDate)}" /></label>
         </div>
         <div class="grid-3">
