@@ -252,7 +252,7 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
             name: "Lucas Oliveira",
             checkout_phone: "(11) 99988-7766",
           },
-          product: { id: "PROD_AG_ILIM", name: "Criativo AI Studio Agência Ilimitada + Vídeo" },
+          product: { id: "PROD_AG_ILIM", name: "CriativoOS Agência Ilimitada + Vídeo" },
         },
       }),
     });

@@ -1,9 +1,9 @@
 {
   "name": "criativo-ai-studio-painel",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
-  "description": "Painel Administrativo, Hub Central de Licenças Ed25519, Webhooks de Checkout e Disparador E-mail/WhatsApp Oficial do Criativo AI Studio Online.",
+  "description": "Painel Administrativo, Hub Central de Licenças Ed25519, Webhooks de Checkout e Disparador E-mail/WhatsApp Oficial do CriativoOS.",
   "engines": {
     "node": ">=22.0.0"
   },

@@ -34,7 +34,7 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
   const firstName = String(license.customer_name || "").trim().split(/\s+/)[0] || "criador(a)";
   const upgrades = Array.isArray(license.upgrades) ? license.upgrades : [];
 
-  const subject = `🔑 Sua Licença do Criativo AI Studio Online está pronta! (${license.license_key})`;
+  const subject = `🔑 Sua Licença do CriativoOS está pronta! (${license.license_key})`;
 
   const html = `<!doctype html>
 <html lang="pt-BR">
@@ -45,7 +45,7 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
         <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#141720;border:1px solid #262b38;border-radius:18px;overflow:hidden;">
           <tr>
             <td style="padding:28px 32px;border-bottom:1px solid #232836;background:linear-gradient(135deg,#181c28 0%,#12141c 100%);">
-              <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#ff6b00;">Criativo AI Studio Online</div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#B9FC01;">CriativoOS</div>
               <h1 style="margin:8px 0 4px 0;font-size:22px;color:#ffffff;">Olá, ${escapeHtml(firstName)}! Seu acesso foi liberado 🚀</h1>
               <p style="margin:0;font-size:14px;color:#9ca3af;">Guarde os dados abaixo para ativar o aplicativo no seu computador.</p>
             </td>
@@ -57,7 +57,7 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
                 <div style="font-size:15px;font-weight:600;color:#ffffff;margin-bottom:14px;">${escapeHtml(license.customer_email)}</div>
 
                 <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Sua Chave de Licença:</div>
-                <div style="background:#191d29;border:1px dashed #ff6b00;border-radius:10px;padding:12px 16px;font-family:'JetBrains Mono',Consolas,monospace;font-size:18px;font-weight:700;color:#ff8c38;letter-spacing:1.2px;text-align:center;">
+                <div style="background:#191d29;border:1px dashed #B9FC01;border-radius:10px;padding:12px 16px;font-family:'JetBrains Mono',Consolas,monospace;font-size:18px;font-weight:700;color:#B9FC01;letter-spacing:1.2px;text-align:center;">
                   ${escapeHtml(license.license_key)}
                 </div>
 
@@ -99,7 +99,7 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
 
               <h2 style="margin:0 0 8px 0;font-size:15px;color:#ffffff;">2. Como ativar em 30 segundos</h2>
               <ol style="margin:0;padding-left:18px;font-size:13.5px;color:#d1d5db;line-height:1.65;">
-                <li>Instale e abra o <strong>Criativo AI Studio</strong> no seu computador.</li>
+                <li>Instale e abra o <strong>CriativoOS</strong> no seu computador.</li>
                 <li>Digite exatamente o e-mail <strong>${escapeHtml(license.customer_email)}</strong>.</li>
                 <li>Cole a chave <strong>${escapeHtml(license.license_key)}</strong> e clique em <strong>Ativar licença agora</strong>.</li>
               </ol>
@@ -118,7 +118,7 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
 </html>`;
 
   const text = [
-    `Olá, ${firstName}! Sua licença do Criativo AI Studio Online foi liberada.`,
+    `Olá, ${firstName}! Sua licença do CriativoOS foi liberada.`,
     "",
     `E-mail de ativação: ${license.customer_email}`,
     `Chave de licença: ${license.license_key}`,
@@ -143,7 +143,7 @@ export function createEmailDispatcher({ vault, logNotification, fetchImpl = glob
       smtpSecure: Boolean(vault.getSetting("smtp_secure", process.env.SMTP_SECURE !== "false")),
       smtpUser: vault.getSetting("smtp_user", process.env.SMTP_USER || ""),
       smtpPass: vault.getSetting("smtp_pass", process.env.SMTP_PASS || ""),
-      fromName: vault.getSetting("smtp_from_name", process.env.SMTP_FROM_NAME || "Criativo AI Studio"),
+      fromName: vault.getSetting("smtp_from_name", process.env.SMTP_FROM_NAME || "CriativoOS"),
       fromEmail: vault.getSetting("smtp_from_email", process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || ""),
       resendApiKey: vault.getSetting("resend_api_key", process.env.RESEND_API_KEY || ""),
       downloadLinks: vault.getSetting("download_links", DEFAULT_DOWNLOAD_LINKS) || DEFAULT_DOWNLOAD_LINKS,

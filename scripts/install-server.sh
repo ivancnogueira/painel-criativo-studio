@@ -79,7 +79,7 @@ fi
 
 mkdir -p "$APP_DIR" "$DATA_DIR" "$ENV_DIR" /run/criativo
 
-echo "==> [2/5] Obtendo pacote mais recente do Criativo AI Studio Online..."
+echo "==> [2/5] Obtendo pacote mais recente do CriativoOS..."
 if [[ -f "./produto.json" && -d "./apps/daemon" ]]; then
   cp -a ./. "$APP_DIR"/
 else
@@ -167,7 +167,7 @@ fi
 echo "==> [4/5] Registrando serviço systemd (criativo.service) na porta ${SERVER_PORT}..."
 cat > /etc/systemd/system/criativo.service <<EOF
 [Unit]
-Description=Criativo AI Studio Online Daemon
+Description=CriativoOS Daemon
 After=network-online.target
 Wants=network-online.target
 
@@ -225,11 +225,11 @@ if [[ -n "$CLAIM_SECRET" ]]; then
     || curl -fsS -X POST "${HUB_URL%/}/api/servers/claims/redeem" \
       -H "Content-Type: application/json" \
       -d "$REDEEM_JSON" >/dev/null 2>&1; then
-    echo "Criativo AI Studio conectado à sua conta com sucesso."
+    echo "CriativoOS conectado à sua conta com sucesso."
     echo "Endpoint da VPS: $HOST_URL"
   else
     echo ""
-    echo "Aviso: Serviço Criativo AI Studio instalado e ativo em $HOST_URL, mas o pareamento automático pelo CRIATIVO_CLAIM não pôde ser concluído (token expirado ou emitido em cache local)."
+    echo "Aviso: Serviço CriativoOS instalado e ativo em $HOST_URL, mas o pareamento automático pelo CRIATIVO_CLAIM não pôde ser concluído (token expirado ou emitido em cache local)."
     echo "Para conectar manualmente no app Desktop ('Entrar em um servidor' -> 'Conexão direta'):"
     echo "  URL do servidor: $HOST_URL"
     echo "  Token de acesso: $ACCESS_TOKEN"

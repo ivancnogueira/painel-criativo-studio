@@ -1,5 +1,5 @@
 const DEFAULT_WHATSAPP_TEMPLATE = [
-  "Olá, *{{1}}*! Sua licença do *Criativo AI Studio Online* foi liberada.",
+  "Olá, *{{1}}*! Sua licença do *CriativoOS* foi liberada.",
   "",
   "E-mail de ativação: {{2}}",
   "Chave de licença: {{3}}",

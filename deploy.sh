@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# Script de Deploy Automático - Painel Central Criativo AI Studio (aaPanel/Linux)
+# Script de Deploy Automático - Painel Central CriativoOS (aaPanel/Linux)
 # Preserva intactos o .env (chaves/senhas) e a pasta dados/ (SQLite de licenças).
 # ==============================================================================
 
@@ -12,7 +12,7 @@ APP_NAME="${PAINEL_APP_NAME:-painel-criativo-studio}"
 BRANCH="${PAINEL_BRANCH:-main}"
 
 echo "======================================================="
-echo "🚀 Iniciando deploy automático do Painel Criativo Studio"
+echo "🚀 Iniciando deploy automático do Painel CriativoOS"
 echo "======================================================="
 
 abortar_com_erro() {
