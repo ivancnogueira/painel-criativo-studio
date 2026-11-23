@@ -76,7 +76,11 @@ function inferPlatformFromAssetName(name) {
   if (lower.endsWith(".exe") || lower.endsWith(".msi")) {
     return { platform: "win32", arch: lower.includes("arm64") ? "arm64" : "x64", install_mode: "native_installer" };
   }
-  if (lower.endsWith(".dmg") || (lower.endsWith(".zip") && (lower.includes("mac") || lower.includes("darwin")))) {
+  if (
+    lower.endsWith(".dmg") ||
+    (lower.endsWith(".zip") &&
+      (lower.includes("mac") || lower.includes("darwin") || lower.includes("universal")))
+  ) {
     return {
       platform: "darwin",
       arch: lower.includes("universal") ? "universal" : lower.includes("arm64") ? "arm64" : "x64",

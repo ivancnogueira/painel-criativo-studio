@@ -25,7 +25,7 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 .period-pill:hover { color: var(--text-primary); }
-.period-pill.active { background: var(--accent-orange); color: #ffffff; }
+.period-pill.active { background: var(--accent-orange); color: var(--accent-on-primary, #0d0d0d); }
 
 /* ─── Grid Superior de KPIs (Hero + 3 Cards Carbono) ─────────────────────── */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
@@ -41,7 +41,7 @@
   box-shadow: var(--shadow-card);
   transition: transform 0.15s ease, border-color 0.15s ease;
 }
-.kpi-hero { background: var(--hero-gradient); border: 1px solid rgba(255, 255, 255, 0.16); color: #ffffff; }
+.kpi-hero { background: var(--hero-gradient); border: 1px solid var(--hero-border, rgba(255, 255, 255, 0.16)); color: #ffffff; }
 .kpi-carbon { background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-primary); }
 .kpi-clickable { cursor: pointer; text-align: left; width: 100%; font-family: inherit; }
 .kpi-clickable:hover { transform: translateY(-1px); border-color: var(--accent-orange); }

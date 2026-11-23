@@ -64,7 +64,7 @@ registerView("messaging", {
                 </label>
                 <label class="field">
                   <span>Nome do Remetente</span>
-                  <input type="text" id="em-from-name" value="${escapeHtml(em.fromName || "Criativo AI Studio")}" />
+                  <input type="text" id="em-from-name" value="${escapeHtml(em.fromName || "CriativoOS")}" />
                 </label>
               </div>
               <label class="field">

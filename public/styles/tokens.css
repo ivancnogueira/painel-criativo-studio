@@ -16,10 +16,12 @@ html[data-theme="dark"] {
   --text-secondary: #9ca3af;
   --text-muted: #6b7280;
 
-  --accent-orange: #ff6b00;
-  --accent-orange-hover: #ff7f24;
-  --accent-orange-soft: rgba(255, 107, 0, 0.14);
-  --hero-gradient: linear-gradient(135deg, #ff5e14 0%, #ff7a29 52%, #e84400 100%);
+  --accent-orange: #b9fc01;
+  --accent-orange-hover: #caff38;
+  --accent-orange-soft: rgba(185, 252, 1, 0.14);
+  --accent-on-primary: #0d0d0d;
+  --hero-gradient: linear-gradient(135deg, #161d09 0%, #1c260c 52%, #10140c 100%);
+  --hero-border: rgba(185, 252, 1, 0.34);
 
   --accent-lime: #b6f342;
   --accent-lime-soft: rgba(182, 243, 66, 0.14);
@@ -62,10 +64,12 @@ html[data-theme="light"] {
   --text-secondary: #475569;
   --text-muted: #64748b;
 
-  --accent-orange: #ea580c;
-  --accent-orange-hover: #c2410c;
-  --accent-orange-soft: rgba(234, 88, 12, 0.11);
-  --hero-gradient: linear-gradient(135deg, #ff5e14 0%, #ff7a29 52%, #e84400 100%);
+  --accent-orange: #0031cc;
+  --accent-orange-hover: #0026a3;
+  --accent-orange-soft: rgba(0, 49, 204, 0.11);
+  --accent-on-primary: #ffffff;
+  --hero-gradient: linear-gradient(135deg, #0031cc 0%, #1648e8 52%, #002199 100%);
+  --hero-border: rgba(255, 255, 255, 0.18);
 
   --accent-lime: #65a30d;
   --accent-lime-soft: rgba(101, 163, 13, 0.12);
