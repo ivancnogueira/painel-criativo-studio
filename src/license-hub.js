@@ -166,11 +166,36 @@ export function createLicenseHub(options = {}) {
     );
   }
 
+  let releasesFeed = null;
+
+  function resolveDynamicDownloadLinks() {
+    const latest = releasesFeed?.getLatestRelease?.("stable");
+    if (!latest || !Array.isArray(latest.artifacts) || latest.artifacts.length === 0) {
+      return null;
+    }
+    const findUrl = (predicate) => {
+      const hit = latest.artifacts.find((art) => art?.external_url && predicate(art));
+      return hit?.external_url || null;
+    };
+    const windows = findUrl(
+      (a) => a.platform === "win32" && String(a.filename || "").toLowerCase().endsWith(".exe"),
+    );
+    const macos =
+      findUrl((a) => a.platform === "darwin" && String(a.filename || "").toLowerCase().endsWith(".dmg")) ||
+      findUrl((a) => a.platform === "darwin" && String(a.filename || "").toLowerCase().endsWith(".zip"));
+    const linux =
+      findUrl((a) => a.platform === "linux" && String(a.filename || "").toLowerCase().endsWith(".appimage")) ||
+      findUrl((a) => a.platform === "linux");
+    if (!windows && !macos && !linux) return null;
+    return { windows, macos, linux };
+  }
+
   const emailDispatcher = createEmailDispatcher({
     vault,
     logNotification,
     fetchImpl: options.fetchImpl,
     transportFactory: options.emailTransportFactory,
+    resolveDynamicDownloadLinks,
   });
 
   const whatsappDispatcher = createWhatsAppDispatcher({
@@ -510,10 +535,11 @@ export function createLicenseHub(options = {}) {
   };
 
   router.use(createServerClaimsRouter(hubApi));
-  const releasesFeed = createReleasesFeedRouter(hubApi, options);
+  releasesFeed = createReleasesFeedRouter(hubApi, options);
   router.use(releasesFeed.router);
   hubApi.publishRelease = releasesFeed.publishRelease;
   hubApi.getLatestRelease = releasesFeed.getLatestRelease;
+  hubApi.syncLatestReleaseFromGithub = releasesFeed.syncLatestFromGithub;
 
   return hubApi;
 }

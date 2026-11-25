@@ -115,6 +115,12 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
   ensureReleasesTables(db);
   const releasesDir = options.releasesDir || path.resolve(process.cwd(), "releases");
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const autoGithubRepo =
+    String(options.autoSyncGithubRepo || process.env.GITHUB_RELEASES_REPO || "ivancnogueira/criativo-studio").trim();
+  const enableAutoGithubSync = Boolean(options.enableAutoGithubSync);
+  const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+  let lastGithubSyncAt = 0;
+  let inFlightGithubSync = null;
 
   function verifyActiveLicenseHeader(req, res) {
     const licenseKey = String(req.headers["x-criativo-license-key"] || req.query.license_key || "").trim();
@@ -261,6 +267,119 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
     };
   }
 
+  async function fetchGithubReleaseDraft({ repo, tag = "" }) {
+    const rawRepo = String(repo || "")
+      .trim()
+      .replace(/^https?:\/\/github\.com\//i, "")
+      .replace(/\.git$/i, "")
+      .replace(/\/+$/, "");
+    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(rawRepo)) {
+      const err = new Error("Informe o repositório no formato owner/repo ou URL do GitHub.");
+      err.statusCode = 400;
+      throw err;
+    }
+    const rawTag = String(tag || "").trim();
+    const apiUrl = rawTag
+      ? `https://api.github.com/repos/${rawRepo}/releases/tags/${encodeURIComponent(rawTag)}`
+      : `https://api.github.com/repos/${rawRepo}/releases/latest`;
+
+    const headers = {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "Criativo-AI-Studio-Painel/1.0",
+    };
+    if (process.env.GITHUB_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+    }
+
+    const ghRes = await fetchImpl(apiUrl, { headers });
+    if (!ghRes.ok) {
+      const err = new Error(`GitHub API retornou HTTP ${ghRes.status} ao consultar ${rawRepo}.`);
+      err.statusCode = ghRes.status === 404 ? 404 : 502;
+      throw err;
+    }
+    const ghData = await ghRes.json();
+    const version = String(ghData.tag_name || "").replace(/^v/i, "").trim();
+    const channel = ghData.prerelease ? "beta" : "stable";
+    const changelogMarkdown = String(ghData.body || "").trim();
+    const assets = Array.isArray(ghData.assets) ? ghData.assets : [];
+
+    const shaMap = new Map();
+    const checksumAsset = assets.find((a) =>
+      /^(sha256sums(\.txt)?|checksums(\.txt)?|.*\.sha256)$/i.test(String(a?.name || ""))
+    );
+    if (checksumAsset?.browser_download_url) {
+      try {
+        const sumRes = await fetchImpl(checksumAsset.browser_download_url, {
+          headers: { "User-Agent": "Criativo-AI-Studio-Painel/1.0" },
+        });
+        if (sumRes.ok) {
+          const sumText = await sumRes.text();
+          for (const [k, v] of parseSha256SumsText(sumText)) {
+            shaMap.set(k, v);
+          }
+        }
+      } catch {
+        // Segue sem mapa de checksums se o download auxiliar falhar
+      }
+    }
+
+    const artifacts = [];
+    for (const asset of assets) {
+      const inferred = inferPlatformFromAssetName(asset?.name);
+      if (!inferred) continue;
+      const cleanName = path.basename(String(asset.name));
+      const sha = shaMap.get(cleanName) || "";
+      artifacts.push({
+        platform: inferred.platform,
+        arch: inferred.arch,
+        filename: cleanName,
+        sha256: sha,
+        size_bytes: Number(asset.size) || 0,
+        external_url: sanitizeExternalHttpsUrl(asset.browser_download_url),
+        install_mode: inferred.install_mode,
+      });
+    }
+
+    return {
+      version,
+      channel,
+      changelog_markdown: changelogMarkdown,
+      artifacts,
+      tag_name: ghData.tag_name || null,
+      html_url: ghData.html_url || null,
+    };
+  }
+
+  async function syncLatestFromGithub({ repo = autoGithubRepo, tag = "" } = {}) {
+    if (inFlightGithubSync) return inFlightGithubSync;
+    const runSync = async () => {
+      const draft = await fetchGithubReleaseDraft({ repo, tag });
+      lastGithubSyncAt = Date.now();
+      if (!draft.version || draft.artifacts.length === 0) {
+        return { ok: false, draft, release: null };
+      }
+      const release = publishRelease({
+        version: draft.version,
+        channel: draft.channel,
+        changelog_markdown: draft.changelog_markdown,
+        artifacts: draft.artifacts,
+      });
+      return { ok: true, draft, release };
+    };
+    inFlightGithubSync = runSync().finally(() => {
+      inFlightGithubSync = null;
+    });
+    return inFlightGithubSync;
+  }
+
+  if (enableAutoGithubSync) {
+    void syncLatestFromGithub({ repo: autoGithubRepo }).catch(() => {});
+    const timer = setInterval(() => {
+      void syncLatestFromGithub({ repo: autoGithubRepo }).catch(() => {});
+    }, AUTO_SYNC_INTERVAL_MS);
+    timer.unref?.();
+  }
+
   const router = express.Router();
 
   router.get("/releases/install-server.sh", (_req, res) => {
@@ -268,11 +387,23 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
     res.send(resolveInstallServerScript());
   });
 
-  router.get("/releases/latest", (req, res) => {
+  router.get("/releases/latest", async (req, res) => {
     const lic = verifyActiveLicenseHeader(req, res);
     if (!lic) return;
     const channel = req.query.channel === "beta" ? "beta" : "stable";
-    const latest = getLatestRelease(channel);
+    let latest = getLatestRelease(channel);
+    if (enableAutoGithubSync) {
+      if (!latest) {
+        try {
+          await syncLatestFromGithub({ repo: autoGithubRepo });
+          latest = getLatestRelease(channel);
+        } catch {
+          // Segue para 404 caso GitHub esteja indisponível
+        }
+      } else if (Date.now() - lastGithubSyncAt >= AUTO_SYNC_INTERVAL_MS) {
+        void syncLatestFromGithub({ repo: autoGithubRepo }).catch(() => {});
+      }
+    }
     if (!latest) return res.status(404).json({ error: "no_release_published" });
     return res.json(latest);
   });
@@ -334,88 +465,45 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
 
   router.post("/admin/releases/import-github", hubApi.requireAdmin, async (req, res) => {
     try {
-      const rawRepo = String(req.body?.repo || "")
-        .trim()
-        .replace(/^https?:\/\/github\.com\//i, "")
-        .replace(/\.git$/i, "")
-        .replace(/\/+$/, "");
-      if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(rawRepo)) {
-        return res.status(400).json({ error: "Informe o repositório no formato owner/repo ou URL do GitHub." });
-      }
-      const rawTag = String(req.body?.tag || "").trim();
-      const apiUrl = rawTag
-        ? `https://api.github.com/repos/${rawRepo}/releases/tags/${encodeURIComponent(rawTag)}`
-        : `https://api.github.com/repos/${rawRepo}/releases/latest`;
-
-      const ghRes = await fetchImpl(apiUrl, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "Criativo-AI-Studio-Painel/1.0",
-        },
+      const draft = await fetchGithubReleaseDraft({
+        repo: req.body?.repo || "",
+        tag: req.body?.tag || "",
       });
-      if (!ghRes.ok) {
-        return res.status(ghRes.status === 404 ? 404 : 502).json({
-          error: `GitHub API retornou HTTP ${ghRes.status} ao consultar ${rawRepo}.`,
-        });
-      }
-      const ghData = await ghRes.json();
-      const version = String(ghData.tag_name || "").replace(/^v/i, "").trim();
-      const channel = ghData.prerelease ? "beta" : "stable";
-      const changelogMarkdown = String(ghData.body || "").trim();
-      const assets = Array.isArray(ghData.assets) ? ghData.assets : [];
-
-      const shaMap = new Map();
-      const checksumAsset = assets.find((a) =>
-        /^(sha256sums(\.txt)?|checksums(\.txt)?|.*\.sha256)$/i.test(String(a?.name || ""))
-      );
-      if (checksumAsset?.browser_download_url) {
-        try {
-          const sumRes = await fetchImpl(checksumAsset.browser_download_url, {
-            headers: { "User-Agent": "Criativo-AI-Studio-Painel/1.0" },
-          });
-          if (sumRes.ok) {
-            const sumText = await sumRes.text();
-            for (const [k, v] of parseSha256SumsText(sumText)) {
-              shaMap.set(k, v);
-            }
-          }
-        } catch {
-          // Segue sem mapa de checksums se o download auxiliar falhar
-        }
-      }
-
-      const artifacts = [];
-      for (const asset of assets) {
-        const inferred = inferPlatformFromAssetName(asset?.name);
-        if (!inferred) continue;
-        const cleanName = path.basename(String(asset.name));
-        const sha = shaMap.get(cleanName) || "";
-        artifacts.push({
-          platform: inferred.platform,
-          arch: inferred.arch,
-          filename: cleanName,
-          sha256: sha,
-          size_bytes: Number(asset.size) || 0,
-          external_url: sanitizeExternalHttpsUrl(asset.browser_download_url),
-          install_mode: inferred.install_mode,
-        });
-      }
-
-      return res.json({
-        ok: true,
-        draft: {
-          version,
-          channel,
-          changelog_markdown: changelogMarkdown,
-          artifacts,
-          tag_name: ghData.tag_name || null,
-          html_url: ghData.html_url || null,
-        },
-      });
+      return res.json({ ok: true, draft });
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      const status = Number(err?.statusCode) || 500;
+      return res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  return { router, publishRelease, getLatestRelease, listReleases };
+  router.post("/releases/sync-webhook", async (req, res) => {
+    const expectedSecret = String(process.env.RELEASE_SYNC_SECRET || "").trim();
+    if (expectedSecret) {
+      const provided = String(
+        req.headers["x-release-sync-secret"] ||
+          String(req.headers.authorization || "").replace(/^Bearer\s+/i, "")
+      ).trim();
+      if (!provided || provided !== expectedSecret) {
+        return res.status(401).json({ error: "invalid_sync_secret" });
+      }
+    } else {
+      let authorized = false;
+      hubApi.requireAdmin(req, res, () => {
+        authorized = true;
+      });
+      if (!authorized) return;
+    }
+
+    try {
+      const repo = String(req.body?.repo || autoGithubRepo).trim();
+      const tag = String(req.body?.tag || "").trim();
+      const synced = await syncLatestFromGithub({ repo, tag });
+      return res.json(synced);
+    } catch (err) {
+      const status = Number(err?.statusCode) || 502;
+      return res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  return { router, publishRelease, getLatestRelease, listReleases, syncLatestFromGithub };
 }

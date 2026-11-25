@@ -356,4 +356,36 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
     const downloadedBundle = await dlHot.json();
     assert.equal(downloadedBundle.version, "1.2.1");
   });
+
+  it("Bloco 4 — Sync automático do GitHub atualiza o banco e os links dinâmicos de download no E-mail", async () => {
+    const { baseUrl, licenseHub } = await startTestServer();
+
+    const synced = await licenseHub.syncLatestReleaseFromGithub({ repo: "criativo/demo" });
+    assert.equal(synced.ok, true);
+    assert.equal(synced.release.version, "1.2.0");
+    assert.equal(synced.release.artifacts[0].sha256, "a".repeat(64));
+
+    const emailCfg = licenseHub.emailDispatcher.getPublicConfig();
+    assert.equal(
+      emailCfg.downloadLinks.windows,
+      "https://github.com/criativo/demo/releases/download/v1.2.0/CriativoAIStudio-Setup-1.2.0.exe"
+    );
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "dono@criativo.test", password: "SenhaForte!2026" }),
+    });
+    const cookie = loginRes.headers.get("set-cookie").split(";")[0];
+
+    const syncRes = await fetch(`${baseUrl}/api/releases/sync-webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ repo: "criativo/demo" }),
+    });
+    assert.equal(syncRes.status, 200);
+    const syncJson = await syncRes.json();
+    assert.equal(syncJson.ok, true);
+    assert.equal(syncJson.release.version, "1.2.0");
+  });
 });

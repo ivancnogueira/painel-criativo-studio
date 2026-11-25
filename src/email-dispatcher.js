@@ -1,10 +1,17 @@
 import nodemailer from "nodemailer";
 
 const DEFAULT_DOWNLOAD_LINKS = {
-  windows: "https://github.com/ivancnogueira/criativo-studio/releases/latest/download/CriativoAIStudio-Setup-1.0.0.exe",
-  macos: "https://github.com/ivancnogueira/criativo-studio/releases/latest/download/CriativoAIStudio-1.0.0-universal.dmg",
-  linux: "https://github.com/ivancnogueira/criativo-studio/releases/latest/download/CriativoAIStudio-1.0.0-x86_64.AppImage",
+  windows: "https://github.com/ivancnogueira/criativo-studio/releases/download/v1.0.4/CriativoOS-Setup-1.0.4.exe",
+  macos: "https://github.com/ivancnogueira/criativo-studio/releases/download/v1.0.4/CriativoOS-1.0.4-universal.dmg",
+  linux: "https://github.com/ivancnogueira/criativo-studio/releases/download/v1.0.4/CriativoOS-1.0.4-x86_64.AppImage",
 };
+
+function isLegacyOrEmptyDownloadLinks(links) {
+  if (!links || typeof links !== "object") return true;
+  const vals = [links.windows, links.macos, links.linux].map((v) => String(v || "").trim());
+  if (vals.some((v) => !v)) return true;
+  return vals.some((v) => v.includes("CriativoAIStudio-") && v.includes("1.0.0"));
+}
 
 function escapeHtml(text) {
   return String(text || "")
@@ -133,7 +140,29 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
   return { subject, html, text };
 }
 
-export function createEmailDispatcher({ vault, logNotification, fetchImpl = globalThis.fetch, transportFactory }) {
+export function createEmailDispatcher({
+  vault,
+  logNotification,
+  fetchImpl = globalThis.fetch,
+  transportFactory,
+  resolveDynamicDownloadLinks,
+}) {
+  function resolveDownloadLinks() {
+    const saved = vault.getSetting("download_links", null);
+    if (!isLegacyOrEmptyDownloadLinks(saved)) {
+      return saved;
+    }
+    const dynamicLinks = typeof resolveDynamicDownloadLinks === "function" ? resolveDynamicDownloadLinks() : null;
+    if (dynamicLinks && (dynamicLinks.windows || dynamicLinks.macos || dynamicLinks.linux)) {
+      return {
+        windows: dynamicLinks.windows || DEFAULT_DOWNLOAD_LINKS.windows,
+        macos: dynamicLinks.macos || DEFAULT_DOWNLOAD_LINKS.macos,
+        linux: dynamicLinks.linux || DEFAULT_DOWNLOAD_LINKS.linux,
+      };
+    }
+    return DEFAULT_DOWNLOAD_LINKS;
+  }
+
   function getConfig() {
     const provider = vault.getSetting("email_provider", process.env.SMTP_HOST ? "smtp" : "none");
     return {
@@ -146,7 +175,7 @@ export function createEmailDispatcher({ vault, logNotification, fetchImpl = glob
       fromName: vault.getSetting("smtp_from_name", process.env.SMTP_FROM_NAME || "CriativoOS"),
       fromEmail: vault.getSetting("smtp_from_email", process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || ""),
       resendApiKey: vault.getSetting("resend_api_key", process.env.RESEND_API_KEY || ""),
-      downloadLinks: vault.getSetting("download_links", DEFAULT_DOWNLOAD_LINKS) || DEFAULT_DOWNLOAD_LINKS,
+      downloadLinks: resolveDownloadLinks(),
       painelUrl: process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br",
     };
   }

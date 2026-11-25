@@ -71,7 +71,11 @@ const isEntryPoint =
   Boolean(process.argv[1]) && path.resolve(process.argv[1]) === path.resolve(__filename);
 
 if (isEntryPoint) {
-  const { app } = createPainelApp();
+  const { app } = createPainelApp({
+    licenseHub: {
+      enableAutoGithubSync: process.env.PAINEL_DISABLE_AUTO_RELEASE_SYNC !== "1",
+    },
+  });
   const PORT = Number(process.env.PORT) || 3009;
   const HOST = process.env.HOST || "0.0.0.0";
   app.listen(PORT, HOST, () => {
