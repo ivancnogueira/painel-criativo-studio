@@ -43,6 +43,10 @@ registerView("messaging", {
     let filterStatus = "";
 
     const renderView = () => {
+      const currentNcfg = store.get().notificationsConfig || { email: {}, whatsapp: {} };
+      const curEm = currentNcfg.email || {};
+      const curWa = currentNcfg.whatsapp || {};
+      const curDl = curEm.downloadLinks || {};
       const queue = store.get().notificationQueue || [];
       const pendingQueue = queue.filter((q) => q.status === "pending");
 
@@ -79,7 +83,7 @@ registerView("messaging", {
                   </label>
                   <label class="field">
                     <span>Nome do Remetente</span>
-                    <input type="text" id="em-from-name" value="${escapeHtml(em.fromName || "CriativoOS")}" />
+                    <input type="text" id="em-from-name" value="${escapeHtml(curEm.fromName || "CriativoOS")}" />
                   </label>
                 </div>
 
@@ -87,7 +91,7 @@ registerView("messaging", {
                   emailProvider !== "none"
                     ? `<label class="field">
                         <span>E-mail Remetente</span>
-                        <input type="email" id="em-from-email" value="${escapeHtml(em.fromEmail || "")}" placeholder="suporte@exemplo.invalid" />
+                        <input type="email" id="em-from-email" value="${escapeHtml(curEm.fromEmail || "")}" placeholder="suporte@exemplo.invalid" />
                       </label>`
                     : ""
                 }
@@ -95,39 +99,51 @@ registerView("messaging", {
                 ${
                   emailProvider === "smtp"
                     ? `<div class="grid-3">
-                        <label class="field"><span>Host SMTP</span><input type="text" id="em-smtp-host" value="${escapeHtml(em.smtpHost || "")}" placeholder="smtp.exemplo.invalid" /></label>
-                        <label class="field"><span>Porta</span><input type="number" id="em-smtp-port" value="${escapeHtml(em.smtpPort || 465)}" /></label>
+                        <label class="field"><span>Host SMTP</span><input type="text" id="em-smtp-host" value="${escapeHtml(curEm.smtpHost || "")}" placeholder="smtp.exemplo.invalid" /></label>
+                        <label class="field"><span>Porta</span><input type="number" id="em-smtp-port" value="${escapeHtml(curEm.smtpPort || 465)}" /></label>
                         <label class="field"><span>SSL/TLS</span>
                           <select id="em-smtp-secure">
-                            <option value="true" ${em.smtpSecure !== false ? "selected" : ""}>Sim (465)</option>
-                            <option value="false" ${em.smtpSecure === false ? "selected" : ""}>STARTTLS (587)</option>
+                            <option value="true" ${curEm.smtpSecure !== false ? "selected" : ""}>Sim (465)</option>
+                            <option value="false" ${curEm.smtpSecure === false ? "selected" : ""}>STARTTLS (587)</option>
                           </select>
                         </label>
                       </div>
                       <div class="grid-2">
-                        <label class="field"><span>Usuário SMTP</span><input type="text" id="em-smtp-user" value="${escapeHtml(em.smtpUser || "")}" placeholder="usuario@exemplo.invalid" /></label>
-                        <label class="field"><span>Senha SMTP</span><input type="password" id="em-smtp-pass" placeholder="${em.hasSmtpPass ? "•••••••• (mantém atual)" : "Senha SMTP"}" /></label>
+                        <label class="field"><span>Usuário SMTP</span><input type="text" id="em-smtp-user" value="${escapeHtml(curEm.smtpUser || "")}" placeholder="usuario@exemplo.invalid" /></label>
+                        <label class="field"><span>Senha SMTP</span><input type="password" id="em-smtp-pass" placeholder="${curEm.hasSmtpPass ? "•••••••• (mantém atual)" : "Senha SMTP"}" /></label>
                       </div>`
                     : ""
                 }
 
                 ${
                   emailProvider === "resend"
-                    ? `<label class="field"><span>Resend API Key</span><input type="password" id="em-resend-key" placeholder="${em.hasResendApiKey ? "•••••••• (mantém atual)" : "re_..."}" /></label>`
+                    ? `<label class="field"><span>Resend API Key</span><input type="password" id="em-resend-key" placeholder="${curEm.hasResendApiKey ? "•••••••• (mantém atual)" : "re_..."}" /></label>`
                     : ""
                 }
 
+                <div class="grid-2">
+                  <label class="field">
+                    <span>Link do Grupo de Suporte (WhatsApp / Comunidade)</span>
+                    <input type="url" id="em-support-group-url" value="${escapeHtml(curEm.supportGroupUrl || "")}" placeholder="https://chat.whatsapp.com/..." />
+                  </label>
+                  <label class="field">
+                    <span>Texto do Botão de Suporte</span>
+                    <input type="text" id="em-support-group-label" value="${escapeHtml(curEm.supportGroupLabel || "Entrar no Grupo de Suporte")}" placeholder="Entrar no Grupo de Suporte" />
+                  </label>
+                </div>
+                <p class="muted" style="margin:-4px 0 4px;font-size:12px;">Quando preenchido, o botão do grupo aparece automaticamente nos e-mails de licença e no Portal de Entrega.</p>
+
                 <details class="details-box">
-                  <summary>Links de Download nos E-mails (${em.useManualDownloadLinks ? "Override Manual Ativo" : "Automático via Releases"})</summary>
+                  <summary>Links de Download nos E-mails (${curEm.useManualDownloadLinks ? "Override Manual Ativo" : "Automático via Releases"})</summary>
                   <div class="form-stack">
                     <label class="check-inline">
-                      <input type="checkbox" id="em-use-manual-dl" ${em.useManualDownloadLinks ? "checked" : ""} />
+                      <input type="checkbox" id="em-use-manual-dl" ${curEm.useManualDownloadLinks ? "checked" : ""} />
                       <span>Substituir links automáticos da última Release por URLs manuais</span>
                     </label>
                     <div class="grid-3">
-                      <label class="field"><span>Windows (.exe)</span><input type="url" id="em-dl-win" value="${escapeHtml(dl.windows || "")}" /></label>
-                      <label class="field"><span>macOS (.dmg)</span><input type="url" id="em-dl-mac" value="${escapeHtml(dl.macos || "")}" /></label>
-                      <label class="field"><span>Linux (.AppImage)</span><input type="url" id="em-dl-lin" value="${escapeHtml(dl.linux || "")}" /></label>
+                      <label class="field"><span>Windows (.exe)</span><input type="url" id="em-dl-win" value="${escapeHtml(curDl.windows || "")}" /></label>
+                      <label class="field"><span>macOS (.dmg)</span><input type="url" id="em-dl-mac" value="${escapeHtml(curDl.macos || "")}" /></label>
+                      <label class="field"><span>Linux (.AppImage)</span><input type="url" id="em-dl-lin" value="${escapeHtml(curDl.linux || "")}" /></label>
                     </div>
                   </div>
                 </details>
@@ -296,6 +312,8 @@ registerView("messaging", {
       });
 
       root.querySelector("#btn-preview-email")?.addEventListener("click", async () => {
+        const draftSupportUrl = root.querySelector("#em-support-group-url")?.value.trim();
+        const draftSupportLabel = root.querySelector("#em-support-group-label")?.value.trim();
         const loadPreview = async (evType) => {
           const res = await api("/api/admin/notifications/preview-email", {
             method: "POST",
@@ -305,6 +323,8 @@ registerView("messaging", {
               plan_tier: "agencia_10",
               license_key: "CRIA-AG10-0000-0000-0000",
               event_type: evType,
+              ...(draftSupportUrl !== undefined ? { support_group_url: draftSupportUrl } : {}),
+              ...(draftSupportLabel !== undefined ? { support_group_label: draftSupportLabel } : {}),
             }),
           });
           return res;
@@ -348,11 +368,13 @@ registerView("messaging", {
         const body = {
           provider: emailProvider,
           fromName: root.querySelector("#em-from-name")?.value.trim() || "CriativoOS",
+          supportGroupUrl: root.querySelector("#em-support-group-url")?.value.trim() || "",
+          supportGroupLabel: root.querySelector("#em-support-group-label")?.value.trim() || "Entrar no Grupo de Suporte",
           useManualDownloadLinks: Boolean(root.querySelector("#em-use-manual-dl")?.checked),
           downloadLinks: {
-            windows: root.querySelector("#em-dl-win")?.value.trim() || dl.windows || "",
-            macos: root.querySelector("#em-dl-mac")?.value.trim() || dl.macos || "",
-            linux: root.querySelector("#em-dl-lin")?.value.trim() || dl.linux || "",
+            windows: root.querySelector("#em-dl-win")?.value.trim() || curDl.windows || "",
+            macos: root.querySelector("#em-dl-mac")?.value.trim() || curDl.macos || "",
+            linux: root.querySelector("#em-dl-lin")?.value.trim() || curDl.linux || "",
           },
         };
         if (root.querySelector("#em-from-email")) body.fromEmail = root.querySelector("#em-from-email").value.trim();

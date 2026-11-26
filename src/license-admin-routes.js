@@ -356,6 +356,8 @@ export function createLicenseAdminRouter({
       downloadLinks: pubCfg.downloadLinks,
       painelUrl: process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br",
       eventType,
+      supportGroupUrl: body.support_group_url !== undefined ? body.support_group_url : pubCfg.supportGroupUrl,
+      supportGroupLabel: body.support_group_label !== undefined ? body.support_group_label : pubCfg.supportGroupLabel,
     });
     return res.json({ ok: true, ...payload });
   });

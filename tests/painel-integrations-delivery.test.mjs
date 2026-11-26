@@ -469,4 +469,89 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
     assert.equal(saleJson.action, "issued_or_updated");
     assert.match(saleJson.license_key, /^CRIA-IND-/);
   });
+
+  it("Grupo de suporte configurável aparece no e-mail de licença, no preview e no portal /api/delivery/:token", async () => {
+    const { baseUrl, cookie, sentEmails } = await startServer();
+
+    // URL inválida (javascript:) deve ser sanitizada para vazio
+    const badCfgRes = await fetch(`${baseUrl}/api/admin/notifications/email-config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        supportGroupUrl: "javascript:alert(1)",
+        supportGroupLabel: "Comunidade VIP",
+      }),
+    });
+    assert.equal(badCfgRes.status, 200);
+    const badCfgJson = await badCfgRes.json();
+    assert.equal(badCfgJson.email.supportGroupUrl, "");
+    assert.equal(badCfgJson.email.supportGroupLabel, "Comunidade VIP");
+
+    // Salva link válido do Grupo de Suporte
+    const supportUrl = "https://chat.whatsapp.com/ExemploSuporte123";
+    const supportLabel = "Entrar no Grupo VIP de Alunos";
+    const cfgRes = await fetch(`${baseUrl}/api/admin/notifications/email-config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        supportGroupUrl: supportUrl,
+        supportGroupLabel: supportLabel,
+      }),
+    });
+    assert.equal(cfgRes.status, 200);
+    const cfgJson = await cfgRes.json();
+    assert.equal(cfgJson.email.supportGroupUrl, supportUrl);
+    assert.equal(cfgJson.email.supportGroupLabel, supportLabel);
+
+    const getCfgRes = await fetch(`${baseUrl}/api/admin/notifications/config`, {
+      headers: { Cookie: cookie },
+    });
+    const getCfgJson = await getCfgRes.json();
+    assert.equal(getCfgJson.email.supportGroupUrl, supportUrl);
+    assert.equal(getCfgJson.email.supportGroupLabel, supportLabel);
+
+    // Emite licença manual com envio de e-mail
+    const issueRes = await fetch(`${baseUrl}/api/admin/licenses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        email: "suporte.aluno@exemplo.invalid",
+        customer_name: "Aluno Suporte",
+        plan_tier: "individual",
+        send_email: true,
+      }),
+    });
+    assert.ok(issueRes.ok, `Esperado HTTP 2xx, recebido ${issueRes.status}`);
+    const issued = await issueRes.json();
+    assert.equal(sentEmails.length, 1);
+    assert.match(sentEmails[0].html, /https:\/\/chat\.whatsapp\.com\/ExemploSuporte123/);
+    assert.match(sentEmails[0].html, /Entrar no Grupo VIP de Alunos/);
+    assert.match(sentEmails[0].text, /Entrar no Grupo VIP de Alunos: https:\/\/chat\.whatsapp\.com\/ExemploSuporte123/);
+
+    // Preview para license_issued inclui o link; para license_revoked omite
+    const prevIssued = await (
+      await fetch(`${baseUrl}/api/admin/notifications/preview-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: cookie },
+        body: JSON.stringify({ event_type: "license_issued" }),
+      })
+    ).json();
+    assert.match(prevIssued.html, /https:\/\/chat\.whatsapp\.com\/ExemploSuporte123/);
+
+    const prevRevoked = await (
+      await fetch(`${baseUrl}/api/admin/notifications/preview-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: cookie },
+        body: JSON.stringify({ event_type: "license_revoked" }),
+      })
+    ).json();
+    assert.doesNotMatch(prevRevoked.html, /ExemploSuporte123/);
+
+    // Portal público de entrega expõe o grupo de suporte
+    const deliveryRes = await fetch(`${baseUrl}/api/delivery/${issued.license.delivery_token}`);
+    assert.equal(deliveryRes.status, 200);
+    const deliveryJson = await deliveryRes.json();
+    assert.equal(deliveryJson.delivery.support_group_url, supportUrl);
+    assert.equal(deliveryJson.delivery.support_group_label, supportLabel);
+  });
 });

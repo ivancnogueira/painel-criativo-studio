@@ -6,6 +6,22 @@ const DEFAULT_DOWNLOAD_LINKS = {
   linux: "https://github.com/ivancnogueira/criativo-studio/releases/download/v1.0.4/CriativoOS-1.0.4-x86_64.AppImage",
 };
 
+const DEFAULT_SUPPORT_GROUP_LABEL = "Entrar no Grupo de Suporte";
+
+function sanitizeSupportUrl(raw) {
+  const val = String(raw || "").trim();
+  if (!val) return "";
+  try {
+    const parsed = new URL(val);
+    if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+      return parsed.toString();
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
 function isLegacyOrEmptyDownloadLinks(links) {
   if (!links || typeof links !== "object") return true;
   const vals = [links.windows, links.macos, links.linux].map((v) => String(v || "").trim());
@@ -41,12 +57,16 @@ export function buildLicenseEmailPayload({
   downloadLinks = DEFAULT_DOWNLOAD_LINKS,
   painelUrl = "https://painel.criativoaistudio.com.br",
   eventType = "license_issued",
+  supportGroupUrl = "",
+  supportGroupLabel = DEFAULT_SUPPORT_GROUP_LABEL,
 }) {
   const meta = planLimitsText(license);
   const firstName = String(license.customer_name || "").trim().split(/\s+/)[0] || "criador(a)";
   const upgrades = Array.isArray(license.upgrades) ? license.upgrades : [];
   const cleanPainelUrl = String(painelUrl || "https://painel.criativoaistudio.com.br").replace(/\/+$/, "");
   const deliveryPageUrl = license.delivery_token ? `${cleanPainelUrl}/entrega/${license.delivery_token}` : null;
+  const cleanSupportUrl = sanitizeSupportUrl(supportGroupUrl);
+  const cleanSupportLabel = String(supportGroupLabel || "").trim() || DEFAULT_SUPPORT_GROUP_LABEL;
 
   const eventHeaderMap = {
     license_issued: {
@@ -153,7 +173,18 @@ export function buildLicenseEmailPayload({
                 <li>Instale e abra o <strong>CriativoOS</strong> no seu computador.</li>
                 <li>Digite exatamente o e-mail <strong>${escapeHtml(license.customer_email)}</strong>.</li>
                 <li>Cole a chave <strong>${escapeHtml(license.license_key)}</strong> e clique em <strong>Ativar licença agora</strong>.</li>
-              </ol>`
+              </ol>
+              ${
+                cleanSupportUrl
+                  ? `<div style="margin-top:22px;background:#101c18;border:1px solid #1f4d3a;border-radius:12px;padding:16px 18px;text-align:center;">
+                      <div style="font-size:13px;font-weight:700;color:#ffffff;margin-bottom:4px;">Precisa de ajuda ou quer acompanhar as novidades?</div>
+                      <div style="font-size:12.5px;color:#9ca3af;margin-bottom:12px;">Entre no nosso grupo oficial de suporte para tirar dúvidas e conversar com outros usuários.</div>
+                      <a href="${escapeHtml(cleanSupportUrl)}" style="display:inline-block;background:#25D366;color:#081c0f;text-decoration:none;font-weight:700;font-size:13.5px;padding:10px 20px;border-radius:9px;">
+                        ${escapeHtml(cleanSupportLabel)} →
+                      </a>
+                    </div>`
+                  : ""
+              }`
                   : `<p style="font-size:13.5px;color:#9ca3af;">Caso tenha sido um engano ou deseje reativar seu acesso, responda este e-mail.</p>`
               }
             </td>
@@ -184,6 +215,7 @@ export function buildLicenseEmailPayload({
           `- Windows: ${downloadLinks.windows}`,
           `- macOS: ${downloadLinks.macos}`,
           `- Linux: ${downloadLinks.linux}`,
+          ...(cleanSupportUrl ? ["", `${cleanSupportLabel}: ${cleanSupportUrl}`] : []),
         ]
       : []),
   ].join("\n");
@@ -232,6 +264,11 @@ export function createEmailDispatcher({
       resendApiKey: vault.getSetting("resend_api_key", process.env.RESEND_API_KEY || ""),
       useManualDownloadLinks: Boolean(vault.getSetting("use_manual_download_links", false)),
       downloadLinks: resolveDownloadLinks(),
+      supportGroupUrl: sanitizeSupportUrl(vault.getSetting("support_group_url", process.env.SUPPORT_GROUP_URL || "")),
+      supportGroupLabel:
+        String(
+          vault.getSetting("support_group_label", process.env.SUPPORT_GROUP_LABEL || DEFAULT_SUPPORT_GROUP_LABEL),
+        ).trim() || DEFAULT_SUPPORT_GROUP_LABEL,
       painelUrl: process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br",
     };
   }
@@ -250,6 +287,8 @@ export function createEmailDispatcher({
       hasResendApiKey: Boolean(cfg.resendApiKey),
       useManualDownloadLinks: cfg.useManualDownloadLinks,
       downloadLinks: cfg.downloadLinks,
+      supportGroupUrl: cfg.supportGroupUrl,
+      supportGroupLabel: cfg.supportGroupLabel,
     };
   }
 
@@ -272,6 +311,12 @@ export function createEmailDispatcher({
     }
     if (input.downloadLinks && typeof input.downloadLinks === "object") {
       vault.setSetting("download_links", input.downloadLinks);
+    }
+    if (input.supportGroupUrl !== undefined) {
+      vault.setSetting("support_group_url", sanitizeSupportUrl(input.supportGroupUrl));
+    }
+    if (input.supportGroupLabel !== undefined) {
+      vault.setSetting("support_group_label", String(input.supportGroupLabel || "").trim() || DEFAULT_SUPPORT_GROUP_LABEL);
     }
     return getPublicConfig();
   }
@@ -299,6 +344,8 @@ export function createEmailDispatcher({
       downloadLinks: cfg.downloadLinks,
       painelUrl: cfg.painelUrl,
       eventType,
+      supportGroupUrl: cfg.supportGroupUrl,
+      supportGroupLabel: cfg.supportGroupLabel,
     });
     const fromHeader = cfg.fromName ? `"${cfg.fromName}" <${cfg.fromEmail}>` : cfg.fromEmail;
 

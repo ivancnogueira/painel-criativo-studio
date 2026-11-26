@@ -81,6 +81,8 @@ export function createPainelApp(options = {}) {
         upgrades: lic.upgrades,
         expires_at: lic.expires_at,
         download_links: emailCfg.downloadLinks,
+        support_group_url: emailCfg.supportGroupUrl || null,
+        support_group_label: emailCfg.supportGroupLabel || "Entrar no Grupo de Suporte",
       },
     });
   });
