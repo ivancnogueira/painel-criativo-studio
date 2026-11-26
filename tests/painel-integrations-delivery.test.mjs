@@ -395,4 +395,78 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
     assert.equal(jsRes.status, 200);
     assert.match(jsRes.headers.get("cache-control") || "", /no-store/);
   });
+
+  it("Token/Secret informado no Passo 1 gera URL limpa e autentica via header ou body (Greenn)", async () => {
+    const { baseUrl, cookie } = await startServer();
+
+    const createRes = await fetch(`${baseUrl}/api/admin/integrations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        platform: "greenn",
+        name: "Greenn Token Usuario",
+        deliveryMode: "direct",
+        fixedPlanTier: "individual",
+        headerSecret: "grn_secret_usuario_999",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const { integration } = await createRes.json();
+    assert.equal(integration.hasHeaderSecret, true);
+    assert.equal(integration.authMode, "header_secret");
+    assert.doesNotMatch(integration.webhookUrl, /\?token=/);
+
+    const cleanPath = new URL(integration.webhookUrl).pathname;
+
+    // Sem token deve retornar 401
+    const unauth = await fetch(`${baseUrl}${cleanPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_status: "paid" }),
+    });
+    assert.equal(unauth.status, 401);
+
+    // Escuta + header x-greenn-token captura evento de teste
+    await fetch(`${baseUrl}/api/admin/integrations/${integration.id}/listen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ action: "start" }),
+    });
+    const testRes = await fetch(`${baseUrl}${cleanPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-greenn-token": "grn_secret_usuario_999" },
+      body: JSON.stringify({
+        current_status: "paid",
+        sale: { id: "GRN-T9", amount: 197.0 },
+        client: { name: "Cliente Token", email: "token.greenn@exemplo.invalid" },
+      }),
+    });
+    assert.equal(testRes.status, 200);
+    assert.equal((await testRes.json()).mode, "test");
+
+    const listenState = await (
+      await fetch(`${baseUrl}/api/admin/integrations/${integration.id}/listen`, { headers: { Cookie: cookie } })
+    ).json();
+    await fetch(`${baseUrl}/api/admin/integrations/${integration.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ isActive: true, fieldMapping: listenState.suggestedMapping }),
+    });
+
+    // Venda real autenticando via token no body (padrão de vários checkouts)
+    const saleRes = await fetch(`${baseUrl}${cleanPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: "grn_secret_usuario_999",
+        current_status: "paid",
+        sale: { id: "GRN-REAL-9", amount: 197.0 },
+        client: { name: "Cliente Token", email: "token.greenn@exemplo.invalid" },
+      }),
+    });
+    const saleJson = await saleRes.json();
+    assert.equal(saleRes.status, 200);
+    assert.equal(saleJson.action, "issued_or_updated");
+    assert.match(saleJson.license_key, /^CRIA-IND-/);
+  });
 });

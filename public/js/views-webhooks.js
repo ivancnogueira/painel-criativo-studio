@@ -548,6 +548,7 @@ registerView("webhooks", {
       if (!platform) return;
 
       let formName = integration?.name || `${platform.name} Principal`;
+      let formHeaderSecret = "";
       let deliveryMode = integration?.deliveryMode || (platform.id === "greenn" ? "direct" : "product_map");
       let fixedPlanTier = integration?.fixedPlanTier || "individual";
       let fixedUpgrades = [...(integration?.fixedUpgrades || [])];
@@ -618,12 +619,20 @@ registerView("webhooks", {
                   <span>Nome desta integração</span>
                   <input type="text" id="wiz-name" value="${escapeHtml(formName)}" placeholder="Ex.: Greenn Funil Principal" />
                 </label>
-                <div class="field">
-                  <span>Canais automáticos ao liberar</span>
-                  <div class="check-row">
-                    <label class="check-pill"><input type="checkbox" id="wiz-send-email" ${sendEmail ? "checked" : ""} /> Enviar E-mail</label>
-                    <label class="check-pill"><input type="checkbox" id="wiz-send-wa" ${sendWhatsapp ? "checked" : ""} /> Enviar WhatsApp</label>
-                  </div>
+                <label class="field">
+                  <span>${escapeHtml(platform.tokenLabel || "Token / Secret do Webhook")} ${integration?.hasHeaderSecret ? `<span class="pill pill-active" style="margin-left:6px;">Salvo no Cofre ✓</span>` : ""}</span>
+                  <input type="password" id="wiz-header-secret" value="${escapeHtml(formHeaderSecret)}" placeholder="${integration?.hasHeaderSecret ? "•••••••• (mantém token atual)" : escapeHtml(platform.tokenPlaceholder || "Opcional: cole o token da plataforma")}" autocomplete="off" />
+                </label>
+              </div>
+              <p class="muted" style="margin:-6px 0 0;">
+                Cole o token configurado na ${escapeHtml(platform.name)} (ex.: Webhook Token da Greenn ou Hottok da Hotmart) para gerar uma <strong>URL limpa</strong> validada por ele, ou deixe em branco para usar token automático na URL.
+              </p>
+
+              <div class="field">
+                <span>Canais automáticos ao liberar</span>
+                <div class="check-row">
+                  <label class="check-pill"><input type="checkbox" id="wiz-send-email" ${sendEmail ? "checked" : ""} /> Enviar E-mail</label>
+                  <label class="check-pill"><input type="checkbox" id="wiz-send-wa" ${sendWhatsapp ? "checked" : ""} /> Enviar WhatsApp</label>
                 </div>
               </div>
 
@@ -680,6 +689,18 @@ registerView("webhooks", {
               <div class="gateway-url-row">
                 <input type="text" readonly value="${escapeHtml(integration.webhookUrl)}" id="wiz-url-input" />
                 <button type="button" class="btn btn-secondary" id="btn-copy-wiz-url">Copiar URL</button>
+                ${
+                  integration.hasHeaderSecret && integration.webhookUrlWithToken
+                    ? `<button type="button" class="btn btn-ghost btn-sm" id="btn-copy-wiz-url-token" title="Copiar alternativa com ?token= na URL">Com ?token</button>`
+                    : ""
+                }
+              </div>
+              <div class="muted">
+                ${
+                  integration.hasHeaderSecret
+                    ? `Autenticação ativa pelo <strong>${escapeHtml(platform.tokenLabel || "Token da Plataforma")}</strong> salvo no Cofre AES-256-GCM.`
+                    : `Autenticação automática via <code>?token=</code> na URL.`
+                }
               </div>
               <div class="listen-banner">
                 <div class="btn-row">
@@ -699,14 +720,6 @@ registerView("webhooks", {
                     </details>`
                   : ""
               }
-
-              <details class="details-box">
-                <summary>Autenticação adicional por Header (opcional — Hottok / Secret da ${escapeHtml(platform.name)})</summary>
-                <label class="field">
-                  <span>Segredo / Token de Header (${integration.hasHeaderSecret ? "Já configurado no Cofre" : "Opcional — o token na URL já autentica"})</span>
-                  <input type="password" id="wiz-header-secret" placeholder="${integration.hasHeaderSecret ? "•••••••• (mantém atual)" : "Cole somente se quiser validar também via header"}" />
-                </label>
-              </details>
             </section>
 
             <!-- Passo 3 -->
@@ -843,6 +856,8 @@ registerView("webhooks", {
 
         const syncFormState = () => {
           formName = root.querySelector("#wiz-name")?.value.trim() || formName;
+          const secretInp = root.querySelector("#wiz-header-secret");
+          if (secretInp) formHeaderSecret = secretInp.value.trim();
           sendEmail = Boolean(root.querySelector("#wiz-send-email")?.checked);
           sendWhatsapp = Boolean(root.querySelector("#wiz-send-wa")?.checked);
           if (deliveryMode === "direct") {
@@ -981,9 +996,11 @@ registerView("webhooks", {
                 sendEmail,
                 sendWhatsapp,
                 fieldMapping: mapping,
+                ...(formHeaderSecret ? { headerSecret: formHeaderSecret } : {}),
               }),
             });
             integration = createdRes.integration;
+            formHeaderSecret = "";
             activeIntegrationId = integration.id;
             showToast("URL gerada! Agora capture um evento de teste ou carregue o exemplo.", "success");
             await refreshDashboardData(["integrations"]);
@@ -996,6 +1013,9 @@ registerView("webhooks", {
 
         root.querySelector("#btn-copy-wiz-url")?.addEventListener("click", () => {
           if (integration) void copyText(integration.webhookUrl, "URL do webhook copiada!");
+        });
+        root.querySelector("#btn-copy-wiz-url-token")?.addEventListener("click", () => {
+          if (integration?.webhookUrlWithToken) void copyText(integration.webhookUrlWithToken, "URL com ?token copiada!");
         });
 
         root.querySelector("#btn-load-sample")?.addEventListener("click", async (e) => {
@@ -1090,6 +1110,7 @@ registerView("webhooks", {
               }),
             });
             integration = res.integration;
+            formHeaderSecret = "";
             isActive = integration.isActive;
             await refreshDashboardData(["integrations", "deliveries"]);
             showToast(isActive ? "Integração salva e ativada!" : "Rascunho salvo com sucesso!", "success");

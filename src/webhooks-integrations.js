@@ -71,11 +71,30 @@ function pickRequestHeaders(req) {
   return out;
 }
 
-function buildWebhookUrl(req, platform, slug, urlToken) {
+function buildWebhookUrl(req, platform, slug, urlToken, hasHeaderSecret = false) {
   const configuredBase = String(process.env.PAINEL_PUBLIC_URL || "").trim().replace(/\/+$/, "");
   const reqHost = req?.get?.("host");
   const base = configuredBase || (reqHost ? `${req.protocol || "https"}://${reqHost}` : "https://painel.criativoaistudio.com.br");
-  return `${base}/api/webhooks/${encodeURIComponent(platform)}/${encodeURIComponent(slug)}?token=${encodeURIComponent(urlToken)}`;
+  const cleanUrl = `${base}/api/webhooks/${encodeURIComponent(platform)}/${encodeURIComponent(slug)}`;
+  if (hasHeaderSecret) return cleanUrl;
+  return `${cleanUrl}?token=${encodeURIComponent(urlToken)}`;
+}
+
+function verifyStripeHmac(rawBody, headerValue, secret) {
+  if (!secret || !headerValue || !rawBody) return false;
+  let timestamp = "";
+  const v1Sigs = [];
+  for (const seg of String(headerValue).split(",")) {
+    const idx = seg.indexOf("=");
+    if (idx <= 0) continue;
+    const k = seg.slice(0, idx).trim();
+    const v = seg.slice(idx + 1).trim();
+    if (k === "t" && !timestamp) timestamp = v;
+    if (k === "v1" && v) v1Sigs.push(v);
+  }
+  if (!timestamp || v1Sigs.length === 0) return false;
+  const expected = crypto.createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex").toLowerCase();
+  return v1Sigs.some((sig) => timingSafeEqualString(sig.toLowerCase(), expected));
 }
 
 function normalizeUpgradesList(raw) {
@@ -206,7 +225,8 @@ export function createIntegrationsWebhooksRouter(hub) {
       platformLogo: platform?.logo || `/logos-integracoes/${row.platform}.svg`,
       name: row.name,
       slug: row.slug,
-      webhookUrl: buildWebhookUrl(req, row.platform, row.slug, row.url_token),
+      webhookUrl: buildWebhookUrl(req, row.platform, row.slug, row.url_token, hasHeaderSecret),
+      webhookUrlWithToken: buildWebhookUrl(req, row.platform, row.slug, row.url_token, false),
       authMode: row.auth_mode || "url_token",
       hasHeaderSecret,
       deliveryMode: row.delivery_mode,
@@ -617,11 +637,12 @@ export function createIntegrationsWebhooksRouter(hub) {
     const sendEmail = body.sendEmail !== false ? 1 : 0;
     const sendWhatsapp = body.sendWhatsapp !== false ? 1 : 0;
     const isActive = body.isActive ? 1 : 0;
-    const authMode = String(body.authMode || "url_token");
+    const rawSecret = String(body.headerSecret ?? body.webhookToken ?? "").trim();
+    const authMode = String(body.authMode || (rawSecret ? "header_secret" : "url_token"));
     let secretKey = null;
-    if (body.headerSecret && String(body.headerSecret).trim()) {
+    if (rawSecret) {
       secretKey = `wh_int_secret_${id}`;
-      hub.vault.setSetting(secretKey, String(body.headerSecret).trim(), { isSecret: true });
+      hub.vault.setSetting(secretKey, rawSecret, { isSecret: true });
     }
     const nowIso = new Date().toISOString();
 
@@ -708,11 +729,17 @@ export function createIntegrationsWebhooksRouter(hub) {
     const nextSendEmail = body.sendEmail !== undefined ? (body.sendEmail ? 1 : 0) : row.send_email;
     const nextSendWa = body.sendWhatsapp !== undefined ? (body.sendWhatsapp ? 1 : 0) : row.send_whatsapp;
     const nextActive = body.isActive !== undefined ? (body.isActive ? 1 : 0) : row.is_active;
-    const nextAuthMode = body.authMode !== undefined ? String(body.authMode) : row.auth_mode;
+    let nextAuthMode = body.authMode !== undefined ? String(body.authMode) : row.auth_mode;
     let nextSecretKey = row.secret_setting_key;
-    if (body.headerSecret !== undefined && String(body.headerSecret).trim()) {
+    const incomingSecret = body.headerSecret ?? body.webhookToken;
+    if (body.clearHeaderSecret === true) {
+      if (nextSecretKey) hub.vault.setSetting(nextSecretKey, "", { isSecret: true });
+      nextSecretKey = null;
+      nextAuthMode = "url_token";
+    } else if (incomingSecret !== undefined && String(incomingSecret).trim()) {
       nextSecretKey = nextSecretKey || `wh_int_secret_${row.id}`;
-      hub.vault.setSetting(nextSecretKey, String(body.headerSecret).trim(), { isSecret: true });
+      hub.vault.setSetting(nextSecretKey, String(incomingSecret).trim(), { isSecret: true });
+      if (body.authMode === undefined) nextAuthMode = "header_secret";
     }
 
     const parsedNextMapping = parseJsonSafe(nextMapping, {});
@@ -936,25 +963,54 @@ export function createIntegrationsWebhooksRouter(hub) {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const urlToken = String(req.query?.token || req.headers?.["x-webhook-token"] || "").trim();
     const headerSecret = integration.secret_setting_key ? hub.vault.getSetting(integration.secret_setting_key, "") : "";
-    const providedHeaderToken = String(
-      req.headers?.["x-hotmart-hottok"] ||
-        req.headers?.["x-greenn-signature"] ||
-        req.headers?.["x-cakto-secret"] ||
-        req.headers?.["security-token"] ||
-        req.headers?.["x-ticto-token"] ||
-        req.headers?.["x-kiwify-token"] ||
-        req.headers?.["x-webhook-token"] ||
-        String(req.headers?.authorization || "").replace(/^Bearer\s+/i, "") ||
-        body.hottok ||
-        body.token ||
-        body.secret ||
-        "",
-    ).trim();
+    const tokenCandidates = [
+      req.headers?.["x-greenn-signature"],
+      req.headers?.["x-greenn-token"],
+      req.headers?.["x-hotmart-hottok"],
+      req.headers?.["x-cakto-secret"],
+      req.headers?.["security-token"],
+      req.headers?.["x-kirvano-token"],
+      req.headers?.["x-ticto-token"],
+      req.headers?.["x-kiwify-token"],
+      req.headers?.["x-webhook-token"],
+      req.headers?.["x-api-token"],
+      req.headers?.["token"],
+      String(req.headers?.authorization || "").replace(/^Bearer\s+/i, ""),
+      req.query?.token,
+      req.query?.hottok,
+      req.query?.secret,
+      body.hottok,
+      body.token,
+      body.webhook_token,
+      body.webhookToken,
+      body.secret,
+      body.api_token,
+      body.data?.token,
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
 
     const urlTokenValid = Boolean(urlToken && timingSafeEqualString(urlToken, integration.url_token));
-    const headerTokenValid = Boolean(headerSecret && providedHeaderToken && timingSafeEqualString(providedHeaderToken, headerSecret));
+    const headerTokenValid = Boolean(
+      headerSecret && tokenCandidates.some((candidate) => timingSafeEqualString(candidate, headerSecret)),
+    );
+    const rawBodyStr = typeof req.rawBody === "string" ? req.rawBody : JSON.stringify(body);
+    const kiwifySig = String(req.headers?.["x-kiwify-signature"] || req.query?.signature || body.signature || "").trim().toLowerCase();
+    const genericHmacSig = String(req.headers?.["x-webhook-signature"] || req.headers?.["x-signature-sha256"] || "")
+      .replace(/^sha256=/i, "")
+      .trim()
+      .toLowerCase();
+    const hmacValid = Boolean(
+      headerSecret &&
+        rawBodyStr &&
+        ((req.headers?.["stripe-signature"] && verifyStripeHmac(rawBodyStr, req.headers["stripe-signature"], headerSecret)) ||
+          (kiwifySig &&
+            timingSafeEqualString(kiwifySig, crypto.createHmac("sha1", headerSecret).update(rawBodyStr).digest("hex").toLowerCase())) ||
+          (genericHmacSig &&
+            timingSafeEqualString(genericHmacSig, crypto.createHmac("sha256", headerSecret).update(rawBodyStr).digest("hex").toLowerCase()))),
+    );
 
-    if (!urlTokenValid && !headerTokenValid) {
+    if (!urlTokenValid && !headerTokenValid && !hmacValid) {
       recordIntegrationDelivery({
         integration,
         transactionId: `auth_err_${Date.now()}`,
