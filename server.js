@@ -24,6 +24,7 @@ const PKG_VERSION = (() => {
   }
 })();
 const BUILD_ID = `${PKG_VERSION}-${Date.now().toString(36)}`;
+const STARTED_AT = new Date().toISOString();
 
 export function createPainelApp(options = {}) {
   const PUBLIC_DIR = options.publicDir || path.join(__dirname, "public");
@@ -43,6 +44,7 @@ export function createPainelApp(options = {}) {
       status: "ok",
       version: PKG_VERSION,
       build: BUILD_ID,
+      startedAt: STARTED_AT,
       service: "criativo-ai-studio-painel",
       timestamp: new Date().toISOString(),
     });

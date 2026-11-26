@@ -91,21 +91,29 @@ fi
 # 5. Reinício automático caso gerenciador conhecido seja detectado
 RESTARTED=0
 AAPANEL_SCRIPT="/www/server/nodejs/vhost/scripts/${APP_NAME}.sh"
-if [ ! -x "$AAPANEL_SCRIPT" ] && [ -d "/www/server/nodejs/vhost/scripts" ]; then
+if [ ! -f "$AAPANEL_SCRIPT" ] && [ -d "/www/server/nodejs/vhost/scripts" ]; then
   for candidate_script in /www/server/nodejs/vhost/scripts/*.sh; do
-    [ -x "$candidate_script" ] || continue
+    [ -f "$candidate_script" ] || continue
     if grep -Fq "$CURRENT_DIR" "$candidate_script" 2>/dev/null; then
       AAPANEL_SCRIPT="$candidate_script"
       break
     fi
   done
 fi
-if [ -x "$AAPANEL_SCRIPT" ]; then
+if [ -f "$AAPANEL_SCRIPT" ]; then
   echo "🔄 Reiniciando projeto Node no aaPanel ($(basename "$AAPANEL_SCRIPT" .sh))..."
   bash "$AAPANEL_SCRIPT" restart && RESTARTED=1 || true
-elif command -v pm2 >/dev/null 2>&1 && pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-  echo "🔄 Reiniciando processo PM2 ($APP_NAME)..."
-  pm2 restart "$APP_NAME" && RESTARTED=1 || true
+elif command -v pm2 >/dev/null 2>&1; then
+  if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+    echo "🔄 Reiniciando processo PM2 ($APP_NAME)..."
+    pm2 restart "$APP_NAME" && RESTARTED=1 || true
+  else
+    PM2_MATCH="$(node -e "try{const l=JSON.parse(require('fs').readFileSync(0,'utf8'));const m=l.find(p=>p.pm2_env&&String(p.pm2_env.pm_cwd||'').replace(/\/+$/,'')===process.argv[1].replace(/\/+$/,''));if(m&&m.name)console.log(m.name);}catch{}" "$CURRENT_DIR" < <(pm2 jlist 2>/dev/null || echo '[]') 2>/dev/null || true)"
+    if [ -n "$PM2_MATCH" ]; then
+      echo "🔄 Reiniciando processo PM2 ($PM2_MATCH)..."
+      pm2 restart "$PM2_MATCH" && RESTARTED=1 || true
+    fi
+  fi
 fi
 
 if [ "$RESTARTED" -eq 1 ]; then
@@ -125,6 +133,8 @@ fi
 echo "======================================================="
 echo "✅ Deploy do Painel concluído com sucesso!"
 if [ "$RESTARTED" -eq 0 ]; then
-  echo "🔄 Lembre-se de clicar em Restart no Node Project do aaPanel ($APP_NAME)."
+  echo "⚠️  ATENÇÃO: O processo Node NÃO foi reiniciado automaticamente!"
+  echo "   O código novo já está no disco, mas a API antiga continua em memória."
+  echo "   👉 Abra o aaPanel -> Website -> Node Project e clique em RESTART no projeto."
 fi
 echo "======================================================="
