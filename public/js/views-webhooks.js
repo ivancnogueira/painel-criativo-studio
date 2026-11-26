@@ -54,10 +54,18 @@ function stopListenTimers() {
   }
 }
 
-function platformLogoHtml(platform) {
-  const logoSrc = escapeHtml(platform?.logo || `/logos-integracoes/${platform?.id || "custom"}.svg`);
-  const nameEsc = escapeHtml(platform?.name || platform?.platformName || "Plataforma");
-  return `<span class="platform-brand-lockup"><img src="${logoSrc}" alt="" class="platform-icon-img" loading="lazy" /><span class="platform-brand-name">${nameEsc}</span></span>`;
+function platformLogoHtml(platform, { size = "md", showName = true } = {}) {
+  const catalogMatch = (store.get().platforms || []).find((p) => p.id === (platform?.id || platform?.platform));
+  const rawSrc = platform?.logo || catalogMatch?.logo || `/logos-integracoes/${platform?.id || "custom"}.svg`;
+  const build = window.__PAINEL_BUILD__ && window.__PAINEL_BUILD__ !== "__BUILD_ID__" ? window.__PAINEL_BUILD__ : "2.0.0";
+  const logoSrc = escapeHtml(`${rawSrc}${rawSrc.includes("?") ? "&" : "?"}v=${encodeURIComponent(build)}`);
+  const nameEsc = escapeHtml(platform?.name || platform?.platformName || catalogMatch?.name || "Plataforma");
+  return `<span class="platform-brand-lockup">
+    <span class="platform-icon-frame platform-icon-frame--${size}">
+      <img src="${logoSrc}" alt="" class="platform-icon-img" loading="lazy" />
+    </span>
+    ${showName ? `<span class="platform-brand-name">${nameEsc}</span>` : ""}
+  </span>`;
 }
 
 function statusBadgeHtml(d) {
@@ -605,10 +613,7 @@ registerView("webhooks", {
                       ${platformLogoHtml(p)}
                       <span class="pill pill-info">${escapeHtml(p.categoryLabel)}</span>
                     </div>
-                    <div>
-                      <h2 class="platform-card-title">${escapeHtml(p.name)}</h2>
-                      <p class="platform-card-desc">${escapeHtml(p.description)}</p>
-                    </div>
+                    <p class="platform-card-desc">${escapeHtml(p.description)}</p>
                     <span class="platform-card-cta">Configurar ${escapeHtml(p.name)} →</span>
                   </button>`,
               )
@@ -1355,9 +1360,14 @@ registerView("webhooks", {
         tbody.innerHTML = rows
           .map((d) => {
             const idEsc = escapeHtml(d.id || d.delivery_key);
+            const platObj = platforms.find((p) => p.id === String(d.provider || "").toLowerCase());
             return `
             <tr class="delivery-row-clickable" data-delivery-id="${idEsc}">
-              <td><strong>${escapeHtml(String(d.provider || "").toUpperCase())}</strong></td>
+              <td>${
+                platObj
+                  ? platformLogoHtml(platObj, { size: "sm", showName: true })
+                  : `<strong>${escapeHtml(String(d.provider || "").toUpperCase())}</strong>`
+              }</td>
               <td><div>${escapeHtml(d.event_name || "-")}</div><div class="muted tabular-nums">${escapeHtml(d.transaction_id || "-")}</div></td>
               <td><div>${escapeHtml(d.buyer_name || "-")}</div><div class="muted">${escapeHtml(d.buyer_email || "-")}</div></td>
               <td class="tabular-nums"><div>${escapeHtml(PLAN_LABELS[d.plan_tier] || d.plan_tier || "-")}</div><div class="muted">${escapeHtml(formatMoney(d.amount_cents || 0, d.currency || "BRL"))}</div></td>
