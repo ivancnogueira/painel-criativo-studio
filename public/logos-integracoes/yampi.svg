@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 44" fill="none">
+  <rect x="2" y="4" width="36" height="36" rx="10" fill="#EC4899"/>
+  <path d="M12.2 13.5H16.8L20 20.4L23.2 13.5H27.8L22.1 24.3V31H17.9V24.3L12.2 13.5Z" fill="#FFFFFF"/>
+  <text x="48" y="28" fill="currentColor" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing="-0.4">Yampi</text>
+</svg>

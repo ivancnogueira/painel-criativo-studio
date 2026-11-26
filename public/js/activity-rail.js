@@ -27,27 +27,36 @@ function formatWhatsAppStatus(waCfg) {
 }
 
 function renderNotificationsBlock(deliveries = [], notificationLogs = []) {
-  const webhookErrors = deliveries
-    .filter((d) => d.action === "auth_error" || d.action === "error" || Number(d.http_status) >= 400)
-    .slice(0, 3);
+  const alerts = deliveries
+    .filter(
+      (d) =>
+        d.action === "pending_mapping" ||
+        d.action === "auth_error" ||
+        d.action === "error" ||
+        Number(d.http_status) >= 400,
+    )
+    .slice(0, 4);
   const recentLogs = notificationLogs.slice(0, 4);
 
-  if (!webhookErrors.length && !recentLogs.length) {
+  if (!alerts.length && !recentLogs.length) {
     return `<div class="muted">Nenhuma notificação ou alerta recente.</div>`;
   }
 
-  const errCards = webhookErrors
+  const errCards = alerts
     .map((d) => {
       const targetId = d.id || d.delivery_key || "";
-      const label = `${String(d.provider || "webhook").toUpperCase()} · HTTP ${Number(d.http_status || 400)}`;
+      const isPending = d.action === "pending_mapping";
+      const label = isPending
+        ? `${String(d.provider || "webhook").toUpperCase()} · Produto não mapeado`
+        : `${String(d.provider || "webhook").toUpperCase()} · HTTP ${Number(d.http_status || 400)}`;
       return `
-        <button type="button" class="rail-notif-card is-error clickable" data-rail-delivery="${escapeHtml(targetId)}">
+        <button type="button" class="rail-notif-card ${isPending ? "" : "is-error"} clickable" data-rail-delivery="${escapeHtml(targetId)}">
           <div class="row-between">
-            <span class="pill pill-revoked">Falha Webhook</span>
+            <span class="pill ${isPending ? "pill-warn" : "pill-revoked"}">${isPending ? "Mapear Produto" : "Falha Webhook"}</span>
             <span class="muted">${escapeHtml(formatRelativeTime(d.processed_at))}</span>
           </div>
           <div class="rail-item-title">${escapeHtml(label)}</div>
-          <div class="rail-item-sub">${escapeHtml(d.error_detail || d.buyer_email || d.event_name || "Clique para inspecionar")}</div>
+          <div class="rail-item-sub">${escapeHtml(d.error_detail || d.offer_name || d.buyer_email || d.event_name || "Clique para inspecionar")}</div>
         </button>
       `;
     })
@@ -101,9 +110,8 @@ function renderTimelineBlock(activityFeed = []) {
   `;
 }
 
-function renderChannelsBlock(webhooksConfig, notificationsConfig) {
-  const secrets = webhooksConfig?.secretsConfigured || {};
-  const configuredCount = GATEWAYS.filter((g) => Boolean(secrets[g.id])).length;
+function renderChannelsBlock(integrations = [], notificationsConfig) {
+  const activeInts = integrations.filter((i) => i.isActive);
   const emailInfo = formatEmailStatus(notificationsConfig?.email);
   const waInfo = formatWhatsAppStatus(notificationsConfig?.whatsapp);
 
@@ -124,17 +132,24 @@ function renderChannelsBlock(webhooksConfig, notificationsConfig) {
     </div>
     <div class="channel-status-row">
       <span class="channel-dot-label">
-        <span class="status-led ${configuredCount > 0 ? "on" : "warn"}"></span>
-        <span>Gateways (${configuredCount}/7)</span>
+        <span class="status-led ${activeInts.length > 0 ? "on" : "warn"}"></span>
+        <span>Integrações (${activeInts.length}/${integrations.length})</span>
       </span>
-      <span class="muted tabular-nums">${configuredCount > 0 ? "Ativos" : "Pendente"}</span>
+      <span class="muted tabular-nums">${activeInts.length > 0 ? "Ativas" : "Nenhuma ativa"}</span>
     </div>
-    <div class="check-row" style="gap:6px">
-      ${GATEWAYS.map((g) => {
-        const ok = Boolean(secrets[g.id]);
-        return `<span class="pill ${ok ? "pill-active" : "pill-warn"}" title="${escapeHtml(g.label)}: ${ok ? "Configurado" : "Sem segredo"}">${escapeHtml(g.label)}</span>`;
-      }).join("")}
-    </div>
+    ${
+      integrations.length > 0
+        ? `<div class="check-row" style="gap:6px">
+            ${integrations
+              .slice(0, 8)
+              .map(
+                (i) =>
+                  `<span class="pill ${i.isActive ? "pill-active" : "pill-warn"}" title="${escapeHtml(i.name)}">${escapeHtml(i.platformName)}</span>`,
+              )
+              .join("")}
+          </div>`
+        : ""
+    }
   `;
 }
 
@@ -149,12 +164,12 @@ registerRail((root, { store, navigate }) => {
   root.innerHTML = `
     <div class="rail-header">
       <div>
-        <h3>Feed Ao Vivo</h3>
-        <span class="muted">Alertas, eventos e canais</span>
+        <h3>Alertas & Feed</h3>
+        <span class="muted">Eventos, pendências e canais</span>
       </div>
       <div class="btn-row">
         <button type="button" class="icon-btn" id="btn-rail-refresh" title="Atualizar feed" aria-label="Atualizar feed">↻</button>
-        <button type="button" class="icon-btn rail-close-btn" id="btn-rail-close" title="Fechar feed" aria-label="Fechar feed">✕</button>
+        <button type="button" class="icon-btn" id="btn-rail-close" title="Fechar feed" aria-label="Fechar feed">✕</button>
       </div>
     </div>
 
@@ -176,9 +191,9 @@ registerRail((root, { store, navigate }) => {
 
     <section class="rail-section">
       <div class="rail-section-title">
-        <span>Canais & Gateways</span>
+        <span>Canais & Integrações</span>
       </div>
-      ${renderChannelsBlock(state.webhooksConfig, state.notificationsConfig)}
+      ${renderChannelsBlock(state.integrations || [], state.notificationsConfig)}
     </section>
   `;
 
@@ -188,7 +203,7 @@ registerRail((root, { store, navigate }) => {
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
-      await refreshDashboardData(["analytics", "deliveries", "notificationLogs", "webhooksConfig", "notificationsConfig"]);
+      await refreshDashboardData(["analytics", "deliveries", "notificationLogs", "integrations", "notificationsConfig"]);
       showToast("Feed ao vivo atualizado!", "success");
     } catch (err) {
       showToast(`Falha ao atualizar feed: ${err.message}`, "error");

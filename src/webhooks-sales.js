@@ -39,6 +39,8 @@ function serializeRawPayload(payload) {
 }
 
 function mapStatusLabel(row) {
+  if (row.action === "test_captured") return "teste";
+  if (row.action === "pending_mapping") return "aguardando mapeamento";
   if (row.action === "issued_or_updated") return row.is_simulated ? "simulado" : "aprovado";
   if (row.action === "revoked") return "reembolso";
   if (row.action === "auth_error" || row.action === "error") return "erro";
@@ -263,6 +265,8 @@ export function createSalesWebhooksRouter(hub, options = {}) {
       ignorado: "action IN ('ignored', 'not_found')",
       erro: "action IN ('error', 'auth_error')",
       simulado: "COALESCE(is_simulated, 0) = 1",
+      pending_mapping: "action = 'pending_mapping'",
+      teste: "action = 'test_captured'",
     };
     if (statusFilters[status]) clauses.push(statusFilters[status]);
     else if (status) { clauses.push("action = ?"); params.push(status); }
@@ -276,8 +280,8 @@ export function createSalesWebhooksRouter(hub, options = {}) {
     const total = hub.db.prepare(`SELECT COUNT(*) AS total FROM sales_webhook_deliveries ${whereSql};`).get(...params)?.total || 0;
     const rows = hub.db
       .prepare(
-        `SELECT id, delivery_key, provider, transaction_id, event_name, buyer_email, buyer_name, buyer_phone,
-                action, license_key, plan_tier, amount_cents, currency, payment_method, http_status,
+        `SELECT id, delivery_key, provider, integration_id, transaction_id, event_name, buyer_email, buyer_name, buyer_phone,
+                action, status_category, license_key, plan_tier, product_id, offer_name, amount_cents, currency, payment_method, http_status,
                 error_detail, is_simulated, replay_count, replayed_at, processed_at
          FROM sales_webhook_deliveries ${whereSql} ORDER BY processed_at DESC LIMIT ? OFFSET ?;`,
       )

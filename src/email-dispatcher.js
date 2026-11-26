@@ -36,12 +36,44 @@ function planLimitsText(license) {
   };
 }
 
-export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWNLOAD_LINKS, painelUrl = "https://painel.criativoaistudio.com.br" }) {
+export function buildLicenseEmailPayload({
+  license,
+  downloadLinks = DEFAULT_DOWNLOAD_LINKS,
+  painelUrl = "https://painel.criativoaistudio.com.br",
+  eventType = "license_issued",
+}) {
   const meta = planLimitsText(license);
   const firstName = String(license.customer_name || "").trim().split(/\s+/)[0] || "criador(a)";
   const upgrades = Array.isArray(license.upgrades) ? license.upgrades : [];
+  const cleanPainelUrl = String(painelUrl || "https://painel.criativoaistudio.com.br").replace(/\/+$/, "");
+  const deliveryPageUrl = license.delivery_token ? `${cleanPainelUrl}/entrega/${license.delivery_token}` : null;
 
-  const subject = `🔑 Sua Licença do CriativoOS está pronta! (${license.license_key})`;
+  const eventHeaderMap = {
+    license_issued: {
+      subject: `🔑 Sua Licença do CriativoOS está pronta! (${license.license_key})`,
+      headline: `Olá, ${escapeHtml(firstName)}! Seu acesso foi liberado 🚀`,
+      subtitle: "Guarde os dados abaixo para ativar o aplicativo no seu computador.",
+    },
+    upgrade_added: {
+      subject: `✨ Novo módulo liberado na sua Licença CriativoOS! (${license.license_key})`,
+      headline: `Olá, ${escapeHtml(firstName)}! Upgrade ativado com sucesso ✨`,
+      subtitle: "Seus novos recursos já foram vinculados à sua chave de licença atual.",
+    },
+    subscription_renewed: {
+      subject: `🔄 Assinatura CriativoOS renovada! (${license.license_key})`,
+      headline: `Olá, ${escapeHtml(firstName)}! Sua licença foi renovada 🔄`,
+      subtitle: "A vigência do seu acesso foi estendida automaticamente.",
+    },
+    license_revoked: {
+      subject: `Aviso sobre sua licença CriativoOS (${license.license_key})`,
+      headline: `Olá, ${escapeHtml(firstName)} — atualização de acesso`,
+      subtitle: "Sua licença foi suspensa ou cancelada após solicitação de reembolso/cancelamento.",
+    },
+  };
+
+  const copyMeta = eventHeaderMap[eventType] || eventHeaderMap.license_issued;
+  const subject = copyMeta.subject;
+  const showDeliverySection = eventType !== "license_revoked";
 
   const html = `<!doctype html>
 <html lang="pt-BR">
@@ -53,8 +85,8 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
           <tr>
             <td style="padding:28px 32px;border-bottom:1px solid #232836;background:linear-gradient(135deg,#181c28 0%,#12141c 100%);">
               <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#B9FC01;">CriativoOS</div>
-              <h1 style="margin:8px 0 4px 0;font-size:22px;color:#ffffff;">Olá, ${escapeHtml(firstName)}! Seu acesso foi liberado 🚀</h1>
-              <p style="margin:0;font-size:14px;color:#9ca3af;">Guarde os dados abaixo para ativar o aplicativo no seu computador.</p>
+              <h1 style="margin:8px 0 4px 0;font-size:22px;color:#ffffff;">${copyMeta.headline}</h1>
+              <p style="margin:0;font-size:14px;color:#9ca3af;">${copyMeta.subtitle}</p>
             </td>
           </tr>
           <tr>
@@ -89,7 +121,19 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
                 </table>
               </div>
 
-              <h2 style="margin:0 0 12px 0;font-size:15px;color:#ffffff;">1. Baixe o Aplicativo Oficial</h2>
+              ${
+                showDeliverySection && deliveryPageUrl
+                  ? `<div style="margin-bottom:22px;text-align:center;">
+                      <a href="${escapeHtml(deliveryPageUrl)}" style="display:inline-block;background:#B9FC01;color:#0d0d0d;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:10px;">
+                        Abrir Minha Central de Entrega →
+                      </a>
+                    </div>`
+                  : ""
+              }
+
+              ${
+                showDeliverySection
+                  ? `<h2 style="margin:0 0 12px 0;font-size:15px;color:#ffffff;">1. Baixe o Aplicativo Oficial</h2>
               <table width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:22px;">
                 <tr>
                   <td align="center" style="background:#1e2330;border:1px solid #2e3547;border-radius:10px;padding:10px;">
@@ -109,12 +153,14 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
                 <li>Instale e abra o <strong>CriativoOS</strong> no seu computador.</li>
                 <li>Digite exatamente o e-mail <strong>${escapeHtml(license.customer_email)}</strong>.</li>
                 <li>Cole a chave <strong>${escapeHtml(license.license_key)}</strong> e clique em <strong>Ativar licença agora</strong>.</li>
-              </ol>
+              </ol>`
+                  : `<p style="font-size:13.5px;color:#9ca3af;">Caso tenha sido um engano ou deseje reativar seu acesso, responda este e-mail.</p>`
+              }
             </td>
           </tr>
           <tr>
             <td style="padding:18px 32px;background:#0e1017;border-top:1px solid #232836;font-size:12px;color:#6b7280;text-align:center;">
-              Enviado automaticamente pelo Hub Central · ${escapeHtml(painelUrl)}
+              Enviado automaticamente pelo Hub Central · ${escapeHtml(cleanPainelUrl)}
             </td>
           </tr>
         </table>
@@ -125,16 +171,21 @@ export function buildLicenseEmailPayload({ license, downloadLinks = DEFAULT_DOWN
 </html>`;
 
   const text = [
-    `Olá, ${firstName}! Sua licença do CriativoOS foi liberada.`,
+    `Olá, ${firstName}! ${copyMeta.subtitle}`,
     "",
     `E-mail de ativação: ${license.customer_email}`,
     `Chave de licença: ${license.license_key}`,
     `Plano: ${meta.planName} (${meta.servers} · ${meta.machines})`,
-    "",
-    "Downloads oficiais:",
-    `- Windows: ${downloadLinks.windows}`,
-    `- macOS: ${downloadLinks.macos}`,
-    `- Linux: ${downloadLinks.linux}`,
+    ...(deliveryPageUrl && showDeliverySection ? ["", `Portal de entrega: ${deliveryPageUrl}`] : []),
+    ...(showDeliverySection
+      ? [
+          "",
+          "Downloads oficiais:",
+          `- Windows: ${downloadLinks.windows}`,
+          `- macOS: ${downloadLinks.macos}`,
+          `- Linux: ${downloadLinks.linux}`,
+        ]
+      : []),
   ].join("\n");
 
   return { subject, html, text };
@@ -148,8 +199,9 @@ export function createEmailDispatcher({
   resolveDynamicDownloadLinks,
 }) {
   function resolveDownloadLinks() {
+    const useManual = Boolean(vault.getSetting("use_manual_download_links", false));
     const saved = vault.getSetting("download_links", null);
-    if (!isLegacyOrEmptyDownloadLinks(saved)) {
+    if (useManual && !isLegacyOrEmptyDownloadLinks(saved)) {
       return saved;
     }
     const dynamicLinks = typeof resolveDynamicDownloadLinks === "function" ? resolveDynamicDownloadLinks() : null;
@@ -159,6 +211,9 @@ export function createEmailDispatcher({
         macos: dynamicLinks.macos || DEFAULT_DOWNLOAD_LINKS.macos,
         linux: dynamicLinks.linux || DEFAULT_DOWNLOAD_LINKS.linux,
       };
+    }
+    if (!isLegacyOrEmptyDownloadLinks(saved)) {
+      return saved;
     }
     return DEFAULT_DOWNLOAD_LINKS;
   }
@@ -175,6 +230,7 @@ export function createEmailDispatcher({
       fromName: vault.getSetting("smtp_from_name", process.env.SMTP_FROM_NAME || "CriativoOS"),
       fromEmail: vault.getSetting("smtp_from_email", process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || ""),
       resendApiKey: vault.getSetting("resend_api_key", process.env.RESEND_API_KEY || ""),
+      useManualDownloadLinks: Boolean(vault.getSetting("use_manual_download_links", false)),
       downloadLinks: resolveDownloadLinks(),
       painelUrl: process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br",
     };
@@ -192,6 +248,7 @@ export function createEmailDispatcher({
       fromName: cfg.fromName,
       fromEmail: cfg.fromEmail,
       hasResendApiKey: Boolean(cfg.resendApiKey),
+      useManualDownloadLinks: cfg.useManualDownloadLinks,
       downloadLinks: cfg.downloadLinks,
     };
   }
@@ -210,13 +267,16 @@ export function createEmailDispatcher({
     if (input.resendApiKey !== undefined && String(input.resendApiKey).trim() !== "") {
       vault.setSetting("resend_api_key", String(input.resendApiKey).trim(), { isSecret: true });
     }
+    if (input.useManualDownloadLinks !== undefined) {
+      vault.setSetting("use_manual_download_links", Boolean(input.useManualDownloadLinks));
+    }
     if (input.downloadLinks && typeof input.downloadLinks === "object") {
       vault.setSetting("download_links", input.downloadLinks);
     }
     return getPublicConfig();
   }
 
-  async function sendLicenseEmail(license) {
+  async function sendLicenseEmail(license, { eventType = "license_issued" } = {}) {
     const cfg = getConfig();
     const toEmail = String(license.customer_email || "").trim();
     if (!toEmail) {
@@ -238,6 +298,7 @@ export function createEmailDispatcher({
       license,
       downloadLinks: cfg.downloadLinks,
       painelUrl: cfg.painelUrl,
+      eventType,
     });
     const fromHeader = cfg.fromName ? `"${cfg.fromName}" <${cfg.fromEmail}>` : cfg.fromEmail;
 

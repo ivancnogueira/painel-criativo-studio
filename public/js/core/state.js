@@ -9,10 +9,13 @@ const initialState = {
   overview: null,
   analytics: null,
   licenses: [],
+  integrations: [],
+  platforms: [],
   webhooksConfig: null,
   deliveries: [],
   notificationsConfig: null,
   notificationLogs: [],
+  notificationQueue: [],
   releases: [],
   loading: false,
 };
@@ -70,6 +73,16 @@ export async function refreshDashboardData(scopes = ["all"]) {
     assigners.push((res) => ({ licenses: res.licenses || [] }));
   }
 
+  if (loadAll || scopeSet.has("webhooks") || scopeSet.has("integrations")) {
+    tasks.push(api("/api/admin/integrations"));
+    assigners.push((res) => ({ integrations: res.integrations || [] }));
+  }
+
+  if (loadAll || scopeSet.has("webhooks") || scopeSet.has("platforms")) {
+    tasks.push(api("/api/admin/integrations/platforms"));
+    assigners.push((res) => ({ platforms: res.platforms || [] }));
+  }
+
   if (loadAll || scopeSet.has("webhooks") || scopeSet.has("webhooksConfig")) {
     tasks.push(api("/api/admin/webhooks/config"));
     assigners.push((res) => ({ webhooksConfig: res }));
@@ -88,6 +101,11 @@ export async function refreshDashboardData(scopes = ["all"]) {
   if (loadAll || scopeSet.has("messaging") || scopeSet.has("notifications") || scopeSet.has("notificationLogs")) {
     tasks.push(api("/api/admin/notifications/logs"));
     assigners.push((res) => ({ notificationLogs: res.logs || [] }));
+  }
+
+  if (loadAll || scopeSet.has("messaging") || scopeSet.has("notifications") || scopeSet.has("notificationQueue")) {
+    tasks.push(api("/api/admin/notifications/queue"));
+    assigners.push((res) => ({ notificationQueue: res.queue || [] }));
   }
 
   if (loadAll || scopeSet.has("releases")) {

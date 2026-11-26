@@ -82,7 +82,61 @@ export function formatRelativeTime(iso) {
   const diffHours = Math.floor(diffMin / 60);
   if (diffHours < 24) return `há ${diffHours} h`;
   const diffDays = Math.floor(diffHours / 24);
-  return `há ${diffDays} d`;
+  if (diffDays <= 7) return `há ${diffDays} d`;
+  return new Date(ts).toLocaleDateString("pt-BR");
+}
+
+export function setButtonLoading(btn, loading, loadingLabel = "Processando...") {
+  if (!btn) return;
+  if (loading) {
+    if (!btn.dataset.origHtml) btn.dataset.origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = loadingLabel;
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.origHtml) {
+      btn.innerHTML = btn.dataset.origHtml;
+      delete btn.dataset.origHtml;
+    }
+  }
+}
+
+export function confirmDialog({
+  title = "Confirmar ação",
+  message = "Tem certeza que deseja continuar?",
+  confirmLabel = "Confirmar",
+  cancelLabel = "Cancelar",
+  danger = false,
+} = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      closeModal();
+      resolve(ok);
+    };
+    openModal({
+      title,
+      width: 440,
+      bodyHtml: `
+        <div class="form-stack">
+          <p style="margin:0;color:var(--text-secondary);font-size:13.5px;line-height:1.55;">${escapeHtml(message)}</p>
+          <div class="btn-row" style="justify-content:flex-end;margin-top:6px;">
+            <button type="button" class="btn btn-ghost" id="confirm-dlg-cancel">${escapeHtml(cancelLabel)}</button>
+            <button type="button" class="btn ${danger ? "btn-danger" : "btn-primary"}" id="confirm-dlg-ok">${escapeHtml(confirmLabel)}</button>
+          </div>
+        </div>`,
+      onMount: (root) => {
+        root.querySelector("#confirm-dlg-cancel")?.addEventListener("click", () => finish(false));
+        root.querySelector("#confirm-dlg-ok")?.addEventListener("click", () => finish(true));
+        $("btn-close-modal")?.addEventListener("click", () => finish(false));
+        $("modal-backdrop")?.addEventListener("click", (e) => {
+          if (e.target.id === "modal-backdrop") finish(false);
+        });
+      },
+    });
+  });
 }
 
 export function ensureStylesheet(href) {

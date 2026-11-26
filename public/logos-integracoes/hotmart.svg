@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 44" fill="none">
+  <rect x="2" y="4" width="36" height="36" rx="10" fill="#F04E23"/>
+  <path d="M13 13H17.2V20.2H22.8V13H27V31H22.8V23.8H17.2V31H13V13Z" fill="#FFFFFF"/>
+  <text x="48" y="28" fill="currentColor" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing="-0.4">Hotmart</text>
+</svg>

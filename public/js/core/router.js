@@ -13,8 +13,8 @@ export const ROUTES = [
   {
     group: "FERRAMENTAS",
     items: [
-      { id: "webhooks", label: "Central de Webhooks", icon: "webhook", badgeKey: "webhookErrors" },
-      { id: "messaging", label: "E-mail & WhatsApp", icon: "mail" },
+      { id: "webhooks", label: "Integrações & Webhooks", icon: "webhook", badgeKey: "webhookErrors" },
+      { id: "messaging", label: "Entregas (E-mail & WA)", icon: "mail" },
       { id: "releases", label: "Releases & Versões", icon: "package" },
     ],
   },
@@ -76,8 +76,17 @@ export function renderSidebarNav() {
   const activeRoute = store.get().route || getCurrentRoute();
   const deliveries = store.get().deliveries || [];
   const webhookErrors = deliveries.filter(
-    (d) => d.action === "auth_error" || d.action === "error" || Number(d.http_status) >= 400,
+    (d) =>
+      d.action === "auth_error" ||
+      d.action === "error" ||
+      d.action === "pending_mapping" ||
+      Number(d.http_status) >= 400,
   ).length;
+  const alertDot = $("rail-alert-badge");
+  if (alertDot) {
+    alertDot.textContent = String(webhookErrors);
+    alertDot.classList.toggle("hidden", webhookErrors === 0);
+  }
 
   nav.innerHTML = ROUTES.map((grp) => {
     const itemsHtml = grp.items
@@ -185,13 +194,9 @@ export function initRouterShell() {
   });
 
   $("btn-toggle-rail")?.addEventListener("click", () => {
-    if (window.innerWidth < 1280) {
-      const opening = !$("activity-rail-root")?.classList.contains("rail-open");
-      $("activity-rail-root")?.classList.toggle("rail-open", opening);
-      $("sidebar-backdrop")?.classList.toggle("hidden", !opening);
-    } else {
-      $("admin-view")?.classList.toggle("rail-hidden");
-    }
+    const opening = !$("activity-rail-root")?.classList.contains("rail-open");
+    $("activity-rail-root")?.classList.toggle("rail-open", opening);
+    $("sidebar-backdrop")?.classList.toggle("hidden", !opening);
   });
 
   $("sidebar-backdrop")?.addEventListener("click", closeMobileOverlays);

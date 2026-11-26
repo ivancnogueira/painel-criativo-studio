@@ -7,6 +7,9 @@ export function createLicenseAdminRouter({
   whatsappDispatcher,
   analyticsService,
   PLAN_MATRIX,
+  getPlanCatalog,
+  savePlanCatalog,
+  processNotificationQueue,
   parseUpgradesJson,
   normalizeUpgrades,
   listActiveDevices,
@@ -69,6 +72,57 @@ export function createLicenseAdminRouter({
 
   router.get("/admin/licenses", requireAdmin, (req, res) => {
     return res.json({ licenses: queryFilteredLicenses(req.query) });
+  });
+
+  router.get("/admin/licenses/:key/details", requireAdmin, (req, res) => {
+    const lic = findLicenseByKey(req.params.key);
+    if (!lic) return res.status(404).json({ error: "not_found" });
+    const devices = listActiveDevices(lic.id);
+    const events = db
+      .prepare(`SELECT id, event_type, actor, details_json, created_at FROM license_events WHERE license_id = ? ORDER BY created_at DESC LIMIT 40;`)
+      .all(lic.id);
+    const transactions = db
+      .prepare(`SELECT * FROM license_transactions WHERE license_id = ? ORDER BY created_at DESC LIMIT 40;`)
+      .all(lic.id);
+    const deliveries = db
+      .prepare(
+        `SELECT id, provider, integration_id, transaction_id, event_name, action, amount_cents, currency, payment_method, http_status, is_simulated, processed_at
+         FROM sales_webhook_deliveries
+         WHERE upper(COALESCE(license_key, '')) = upper(?) OR lower(COALESCE(buyer_email, '')) = lower(?)
+         ORDER BY processed_at DESC LIMIT 20;`,
+      )
+      .all(lic.license_key, lic.customer_email);
+    const notifications = db
+      .prepare(`SELECT * FROM notification_logs WHERE license_id = ? OR upper(COALESCE(license_key, '')) = upper(?) ORDER BY created_at DESC LIMIT 20;`)
+      .all(lic.id, lic.license_key);
+    const queuedRetries = db
+      .prepare(`SELECT * FROM notification_queue WHERE license_id = ? OR upper(COALESCE(license_key, '')) = upper(?) ORDER BY created_at DESC LIMIT 10;`)
+      .all(lic.id, lic.license_key);
+    const baseUrl = String(process.env.PAINEL_PUBLIC_URL || `${req.protocol}://${req.get("host") || "localhost"}`).replace(/\/+$/, "");
+    const deliveryUrl = lic.delivery_token ? `${baseUrl}/entrega/${lic.delivery_token}` : null;
+
+    return res.json({
+      ok: true,
+      license: lic,
+      devices,
+      events,
+      transactions,
+      deliveries,
+      notifications,
+      queuedRetries,
+      deliveryUrl,
+    });
+  });
+
+  router.get("/admin/plans", requireAdmin, (_req, res) => {
+    const plans = typeof getPlanCatalog === "function" ? getPlanCatalog() : PLAN_MATRIX;
+    return res.json({ ok: true, plans });
+  });
+
+  router.put("/admin/plans", requireAdmin, (req, res) => {
+    if (typeof savePlanCatalog !== "function") return res.status(501).json({ error: "not_supported" });
+    const plans = savePlanCatalog(req.body?.plans || req.body || {});
+    return res.json({ ok: true, plans });
   });
 
   router.get("/admin/licenses/export.csv", requireAdmin, (req, res) => {
@@ -287,6 +341,7 @@ export function createLicenseAdminRouter({
     const planTier = PLAN_MATRIX[body.plan_tier] ? body.plan_tier : "individual";
     const meta = PLAN_MATRIX[planTier];
     const pubCfg = emailDispatcher.getPublicConfig();
+    const eventType = String(body.event_type || "license_issued");
     const payload = buildLicenseEmailPayload({
       license: {
         customer_name: String(body.customer_name || "Cliente Exemplo"),
@@ -296,11 +351,24 @@ export function createLicenseAdminRouter({
         max_servers: meta.max_servers,
         max_machines: meta.max_machines,
         upgrades: normalizeUpgrades(body.upgrades || []),
+        delivery_token: body.delivery_token || "preview-token-demo",
       },
       downloadLinks: pubCfg.downloadLinks,
       painelUrl: process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br",
+      eventType,
     });
     return res.json({ ok: true, ...payload });
+  });
+
+  router.get("/admin/notifications/queue", requireAdmin, (_req, res) => {
+    const queue = db.prepare(`SELECT * FROM notification_queue ORDER BY created_at DESC LIMIT 60;`).all();
+    return res.json({ ok: true, queue });
+  });
+
+  router.post("/admin/notifications/retry-due", requireAdmin, async (req, res) => {
+    if (typeof processNotificationQueue !== "function") return res.json({ ok: true, processed: 0 });
+    const summary = await processNotificationQueue({ forceNow: req.body?.force_now !== false });
+    return res.json({ ok: true, ...summary });
   });
 
   router.put("/admin/notifications/whatsapp-config", requireAdmin, (req, res) => {

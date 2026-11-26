@@ -23,19 +23,22 @@
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.12s var(--ease-out, ease);
 }
+.btn:active:not(:disabled) { transform: scale(0.97); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-full { width: 100%; }
 .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: var(--radius-sm); }
 .btn-primary { background: var(--accent-orange); color: var(--accent-on-primary, #0d0d0d); }
-.btn-primary:hover:not(:disabled) { background: var(--accent-orange-hover); }
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) { background: var(--accent-orange-hover); }
+  .btn-secondary:hover:not(:disabled) { background: var(--bg-surface-3); }
+  .btn-ghost:hover:not(:disabled) { background: var(--bg-surface-2); color: var(--text-primary); }
+  .btn-danger:hover:not(:disabled) { background: var(--accent-danger); color: #ffffff; }
+}
 .btn-secondary { background: var(--bg-surface-2); border-color: var(--border-strong); color: var(--text-primary); }
-.btn-secondary:hover:not(:disabled) { background: var(--bg-surface-3); }
 .btn-ghost { background: transparent; border-color: var(--border-subtle); color: var(--text-secondary); }
-.btn-ghost:hover:not(:disabled) { background: var(--bg-surface-2); color: var(--text-primary); }
 .btn-danger { background: var(--accent-danger-soft); border-color: rgba(255, 90, 101, 0.35); color: var(--accent-danger); }
-.btn-danger:hover:not(:disabled) { background: var(--accent-danger); color: #ffffff; }
 .btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* ─── Formulários Dual-Theme ──────────────────────────────────────────────── */
@@ -155,6 +158,18 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 /* ─── Toast Stack ─────────────────────────────────────────────────────────── */
 .toast-stack { position: fixed; right: 20px; bottom: 20px; z-index: 80; display: flex; flex-direction: column; gap: 8px; max-width: 380px; }
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.97) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes drawerIn {
+  from { transform: translateX(24px); opacity: 0.4; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .toast-item {
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
@@ -164,6 +179,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   box-shadow: var(--shadow-modal);
   font-size: 13px;
   font-weight: 500;
+  animation: toastIn 0.18s var(--ease-out, ease) both;
 }
 .toast-item.toast-success { border-left: 3px solid var(--accent-success); }
 .toast-item.toast-error { border-left: 3px solid var(--accent-danger); }
@@ -181,23 +197,32 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .modal-dialog {
   width: 100%;
   max-width: 560px;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow-y: auto;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   padding: 22px;
   box-shadow: var(--shadow-modal);
+  animation: modalIn 0.18s var(--ease-out, ease) both;
 }
 .drawer-backdrop { justify-content: flex-end; }
 .drawer-panel {
-  width: min(560px, 100vw);
-  height: 100%;
+  width: min(620px, 100vw);
+  height: 100dvh;
   overflow-y: auto;
   background: var(--bg-surface);
   border-left: 1px solid var(--border-strong);
   padding: 22px;
   box-shadow: var(--shadow-modal);
+  animation: drawerIn 0.2s var(--ease-out, ease) both;
+}
+.alert-warn { background: var(--accent-warn-soft); border: 1px solid rgba(245, 158, 11, 0.32); color: var(--accent-warn); }
+.alert-success { background: var(--accent-success-soft); border: 1px solid rgba(49, 207, 118, 0.32); color: var(--accent-success); }
+@media (max-width: 767px) {
+  input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], input[type="search"], input[type="date"], select, textarea {
+    font-size: 16px;
+  }
 }
 .overlay-header {
   display: flex;

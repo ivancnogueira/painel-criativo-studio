@@ -315,9 +315,39 @@ registerView("overview", {
     const deltas = analytics.deltas || {};
     const goal = analytics.goal || { targetCents: 1000000, currentCents: 0, percent: 0, currency: "BRL" };
     const currency = analytics.primaryCurrency || "BRL";
+    const emailConfigured = (state.notificationsConfig?.email?.provider || "none") !== "none";
+    const hasActiveIntegration = (state.integrations || []).some((i) => i.isActive);
+    const hasRelease = (state.releases || []).length > 0;
+    const showChecklist = !emailConfigured || !hasActiveIntegration;
+
+    const checklistHtml = showChecklist
+      ? `<section class="setup-checklist">
+          <div class="row-between">
+            <div>
+              <strong style="font-size:14px;">Primeiros passos do Hub Central</strong>
+              <p class="muted" style="margin:2px 0 0;">Complete a configuração inicial para automatizar vendas e entregas.</p>
+            </div>
+          </div>
+          <div class="checklist-items">
+            <div class="checklist-step">
+              <span>${emailConfigured ? "✓" : "1."} E-mail de Entrega</span>
+              <button type="button" class="btn ${emailConfigured ? "btn-ghost" : "btn-primary"} btn-sm" data-nav-step="messaging">${emailConfigured ? "Configurado" : "Configurar"}</button>
+            </div>
+            <div class="checklist-step">
+              <span>${hasActiveIntegration ? "✓" : "2."} 1ª Integração (Greenn/Appmax)</span>
+              <button type="button" class="btn ${hasActiveIntegration ? "btn-ghost" : "btn-primary"} btn-sm" data-nav-step="webhooks">${hasActiveIntegration ? "Ativa" : "Conectar"}</button>
+            </div>
+            <div class="checklist-step">
+              <span>${hasRelease ? "✓" : "3."} Release Publicada</span>
+              <button type="button" class="btn ${hasRelease ? "btn-ghost" : "btn-secondary"} btn-sm" data-nav-step="releases">${hasRelease ? "Pronta" : "Publicar"}</button>
+            </div>
+          </div>
+        </section>`
+      : "";
 
     root.innerHTML = `
       ${renderControlToolbar("Visão Geral", "Cockpit executivo de faturamento, licenças e conversão em tempo real", state)}
+      ${checklistHtml}
       <section class="kpi-grid">
         <article class="kpi-card kpi-hero">
           <div class="kpi-top"><span class="kpi-label">Faturamento Líquido</span><span class="kpi-icon-box">R$</span></div>
@@ -378,6 +408,9 @@ registerView("overview", {
     `;
 
     bindControlToolbar(root, store);
+    root.querySelectorAll("[data-nav-step]").forEach((btn) => {
+      btn.addEventListener("click", () => navigate(btn.dataset.navStep));
+    });
     root.querySelector("#btn-hero-sales-report")?.addEventListener("click", () => navigate("sales"));
     root.querySelector("#btn-kpi-goal")?.addEventListener("click", () => openGoalEditModal(goal));
     mountCashFlowWidget(root.querySelector("#ov-cashflow"), analytics, state, store, currency);

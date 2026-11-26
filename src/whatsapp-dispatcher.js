@@ -83,7 +83,7 @@ export function createWhatsAppDispatcher({ vault, logNotification, fetchImpl = g
     return getPublicConfig();
   }
 
-  async function sendLicenseWhatsApp(license) {
+  async function sendLicenseWhatsApp(license, { eventType = "license_issued" } = {}) {
     const cfg = getConfig();
     const phone = normalizePhoneNumber(license.customer_phone);
 
@@ -122,6 +122,8 @@ export function createWhatsAppDispatcher({ vault, logNotification, fetchImpl = g
 
     const firstName = String(license.customer_name || "").trim().split(/\s+/)[0] || "criador(a)";
     const planLabel = getPlanDisplayName(license.plan_tier);
+    const painelUrl = String(process.env.PAINEL_PUBLIC_URL || "https://painel.criativoaistudio.com.br").replace(/\/+$/, "");
+    const deliveryLink = license.delivery_token ? `${painelUrl}/entrega/${license.delivery_token}` : "";
 
     let payload;
     if (cfg.sendMode === "template") {
@@ -146,11 +148,17 @@ export function createWhatsAppDispatcher({ vault, logNotification, fetchImpl = g
         },
       };
     } else {
-      const bodyText = String(cfg.messageTemplate || DEFAULT_WHATSAPP_TEMPLATE)
-        .replaceAll("{{1}}", firstName)
-        .replaceAll("{{2}}", String(license.customer_email || ""))
-        .replaceAll("{{3}}", String(license.license_key || ""))
-        .replaceAll("{{4}}", planLabel);
+      const baseText =
+        eventType === "upgrade_added"
+          ? `Olá, *${firstName}*! Um novo upgrade foi adicionado à sua licença *${license.license_key}* (${planLabel}).`
+          : eventType === "subscription_renewed"
+            ? `Olá, *${firstName}*! Sua assinatura do *CriativoOS* (${license.license_key}) foi renovada.`
+            : String(cfg.messageTemplate || DEFAULT_WHATSAPP_TEMPLATE)
+                .replaceAll("{{1}}", firstName)
+                .replaceAll("{{2}}", String(license.customer_email || ""))
+                .replaceAll("{{3}}", String(license.license_key || ""))
+                .replaceAll("{{4}}", planLabel);
+      const bodyText = deliveryLink ? `${baseText}\n\nPortal de entrega: ${deliveryLink}` : baseText;
       payload = {
         messaging_product: "whatsapp",
         to: phone,

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 44" fill="none">
+  <rect x="2" y="4" width="36" height="36" rx="10" fill="#16A34A"/>
+  <path d="M13 22.5C13 17.8 16.7 14 21.4 14C24.4 14 26.8 15.3 28 17.4L24.4 19.6C23.7 18.4 22.7 17.8 21.4 17.8C18.8 17.8 17 19.8 17 22.5C17 25.2 18.8 27.2 21.5 27.2C23.5 27.2 24.8 26.3 25.2 24.7H21.2V21.4H29.1V23.2C29.1 27.8 26 31 21.4 31C16.7 31 13 27.2 13 22.5Z" fill="#FFFFFF"/>
+  <text x="48" y="28" fill="currentColor" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing="-0.4">Greenn</text>
+</svg>

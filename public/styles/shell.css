@@ -37,21 +37,19 @@
 .logo-box img { width: 100%; height: 100%; object-fit: contain; }
 .login-card h1 { margin: 6px 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 
-/* ─── App Shell 3 Zonas ───────────────────────────────────────────────────── */
+/* ─── App Shell 2 Zonas + Activity Rail Sob Demanda ──────────────────────── */
 .app-shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--rail-w);
-  min-height: 100vh;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 100dvh;
   background: var(--bg-canvas);
 }
-.app-shell.rail-hidden { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
-.app-shell.rail-hidden .activity-rail { display: none; }
 
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
 .sidebar {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100dvh;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-subtle);
   display: flex;
@@ -303,19 +301,43 @@ html[data-theme="light"] .theme-toggle-btn .icon-moon { opacity: 1; transform: r
 }
 .view-root { padding: 22px; flex: 1; }
 
-/* ─── Activity Rail & Responsivo ──────────────────────────────────────────── */
+/* ─── Activity Rail Sob Demanda & Responsivo ──────────────────────────────── */
 .activity-rail {
-  position: sticky;
+  position: fixed;
   top: 0;
-  height: 100vh;
+  right: 0;
+  width: min(360px, 94vw);
+  height: 100dvh;
   background: var(--bg-sidebar);
-  border-left: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--border-strong);
   padding: 18px 16px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  z-index: 35;
+  z-index: 50;
+  transform: translateX(100%);
+  transition: transform 0.22s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+  box-shadow: var(--shadow-modal);
+}
+.activity-rail.rail-open { transform: translateX(0); }
+.rail-trigger-btn { position: relative; }
+.rail-alert-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-danger);
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .mobile-only { display: none; }
 .sidebar-backdrop {
@@ -325,21 +347,8 @@ html[data-theme="light"] .theme-toggle-btn .icon-moon { opacity: 1; transform: r
   backdrop-filter: blur(3px);
   z-index: 38;
 }
-@media (max-width: 1279px) {
-  .app-shell { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
-  .activity-rail {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: min(var(--rail-w), 92vw);
-    transform: translateX(100%);
-    transition: transform 0.24s ease;
-    box-shadow: var(--shadow-modal);
-  }
-  .activity-rail.rail-open { transform: translateX(0); }
-}
 @media (max-width: 1023px) {
-  .app-shell, .app-shell.rail-hidden { grid-template-columns: minmax(0, 1fr); }
+  .app-shell { grid-template-columns: minmax(0, 1fr); }
   .mobile-only { display: inline-flex; }
   .sidebar {
     position: fixed;
@@ -347,7 +356,7 @@ html[data-theme="light"] .theme-toggle-btn .icon-moon { opacity: 1; transform: r
     left: 0;
     width: min(var(--sidebar-w), 85vw);
     transform: translateX(-100%);
-    transition: transform 0.24s ease;
+    transition: transform 0.22s var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
     box-shadow: var(--shadow-modal);
   }
   .sidebar.sidebar-open { transform: translateX(0); }

@@ -103,6 +103,90 @@ export function ensureSchemaAndMigrations(db) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_notification_logs_created ON notification_logs(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS webhook_integrations (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      url_token TEXT NOT NULL,
+      auth_mode TEXT NOT NULL DEFAULT 'url_token',
+      secret_setting_key TEXT,
+      delivery_mode TEXT NOT NULL DEFAULT 'product_map' CHECK(delivery_mode IN ('direct', 'product_map')),
+      fixed_plan_tier TEXT DEFAULT 'individual',
+      fixed_upgrades_json TEXT NOT NULL DEFAULT '[]',
+      fixed_duration_days INTEGER,
+      field_mapping_json TEXT NOT NULL DEFAULT '{}',
+      send_email INTEGER NOT NULL DEFAULT 1,
+      send_whatsapp INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      listening_until TEXT,
+      sample_payload_json TEXT,
+      sample_headers_json TEXT,
+      last_event_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wh_integrations_platform ON webhook_integrations(platform, is_active);
+
+    CREATE TABLE IF NOT EXISTS webhook_delivery_rules (
+      id TEXT PRIMARY KEY,
+      integration_id TEXT NOT NULL REFERENCES webhook_integrations(id) ON DELETE CASCADE,
+      match_field TEXT NOT NULL DEFAULT 'product_id' CHECK(match_field IN ('product_id', 'offer_name')),
+      match_value TEXT NOT NULL,
+      rule_action TEXT NOT NULL DEFAULT 'grant_plan' CHECK(rule_action IN ('grant_plan', 'add_upgrades_only', 'create_new_license', 'ignore')),
+      plan_tier TEXT DEFAULT 'individual',
+      add_upgrades_json TEXT NOT NULL DEFAULT '[]',
+      duration_days INTEGER,
+      default_amount_cents INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'BRL',
+      label TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wh_rules_integration ON webhook_delivery_rules(integration_id);
+
+    CREATE TABLE IF NOT EXISTS license_transactions (
+      id TEXT PRIMARY KEY,
+      license_id TEXT NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      integration_id TEXT,
+      transaction_id TEXT NOT NULL,
+      product_id TEXT,
+      offer_name TEXT,
+      grant_type TEXT NOT NULL DEFAULT 'plan' CHECK(grant_type IN ('plan', 'upgrade', 'renewal')),
+      plan_tier TEXT,
+      upgrades_json TEXT NOT NULL DEFAULT '[]',
+      amount_cents INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'BRL',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
+      created_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lic_tx_license ON license_transactions(license_id);
+    CREATE INDEX IF NOT EXISTS idx_lic_tx_lookup ON license_transactions(provider, transaction_id);
+
+    CREATE TABLE IF NOT EXISTS notification_queue (
+      id TEXT PRIMARY KEY,
+      license_id TEXT,
+      license_key TEXT,
+      channel TEXT NOT NULL CHECK(channel IN ('email', 'whatsapp')),
+      event_type TEXT NOT NULL DEFAULT 'license_issued',
+      recipient TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'failed')),
+      next_retry_at TEXT NOT NULL,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notif_queue_due ON notification_queue(status, next_retry_at);
   `);
 
   ensureColumns(db, "sales_webhook_deliveries", [
@@ -120,6 +204,8 @@ export function ensureSchemaAndMigrations(db) {
     { name: "is_simulated", definition: "INTEGER DEFAULT 0" },
     { name: "replayed_at", definition: "TEXT" },
     { name: "replay_count", definition: "INTEGER DEFAULT 0" },
+    { name: "integration_id", definition: "TEXT" },
+    { name: "status_category", definition: "TEXT" },
   ]);
 
   ensureColumns(db, "licenses", [
@@ -129,13 +215,19 @@ export function ensureSchemaAndMigrations(db) {
     { name: "source_provider", definition: "TEXT DEFAULT 'manual'" },
     { name: "is_simulated", definition: "INTEGER DEFAULT 0" },
     { name: "notes", definition: "TEXT" },
+    { name: "delivery_token", definition: "TEXT" },
+    { name: "last_email_status", definition: "TEXT" },
+    { name: "last_whatsapp_status", definition: "TEXT" },
+    { name: "last_delivery_at", definition: "TEXT" },
   ]);
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_deliveries_id ON sales_webhook_deliveries(id) WHERE id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_sales_deliveries_processed ON sales_webhook_deliveries(processed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sales_deliveries_provider_action ON sales_webhook_deliveries(provider, action);
+    CREATE INDEX IF NOT EXISTS idx_sales_deliveries_integration ON sales_webhook_deliveries(integration_id, processed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_licenses_status_plan ON licenses(status, plan_tier);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_licenses_delivery_token ON licenses(delivery_token) WHERE delivery_token IS NOT NULL;
 
     UPDATE sales_webhook_deliveries
     SET id = lower(hex(randomblob(12)))
@@ -156,5 +248,6 @@ export function ensureSchemaAndMigrations(db) {
     UPDATE licenses SET currency = 'BRL' WHERE currency IS NULL OR currency = '';
     UPDATE licenses SET amount_cents = 0 WHERE amount_cents IS NULL;
     UPDATE licenses SET is_simulated = 0 WHERE is_simulated IS NULL;
+    UPDATE licenses SET delivery_token = lower(hex(randomblob(16))) WHERE delivery_token IS NULL OR delivery_token = '';
   `);
 }

@@ -75,7 +75,6 @@ export function openGoalConfigModal() {
 
 function bindTopbarActions() {
   $("btn-quick-license")?.addEventListener("click", () => navigate("licenses", { focus: "create" }));
-  $("btn-quick-simulate")?.addEventListener("click", () => navigate("webhooks", { focus: "simulate" }));
   $("btn-global-refresh")?.addEventListener("click", async () => {
     const btn = $("btn-global-refresh");
     if (btn) btn.disabled = true;
@@ -93,6 +92,17 @@ function bindTopbarActions() {
   window.addEventListener("criativo:open-goal-modal", openGoalConfigModal);
 }
 
+async function syncSidebarVersion() {
+  try {
+    const h = await api("/api/health");
+    if (h?.version && $("sidebar-version-label")) {
+      $("sidebar-version-label").textContent = `Hub v${h.version}`;
+    }
+  } catch {
+    // silencioso
+  }
+}
+
 async function bootstrapAuthenticatedShell() {
   if (!shellInitialized) {
     shellInitialized = true;
@@ -100,6 +110,7 @@ async function bootstrapAuthenticatedShell() {
     initRouterShell();
     initCommandPalette();
     bindTopbarActions();
+    void syncSidebarVersion();
     store.subscribe((nextState) => {
       updateSidebarGoalCard(nextState);
       renderSidebarNav();

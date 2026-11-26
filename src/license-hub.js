@@ -39,8 +39,10 @@ export const PLAN_MATRIX = {
 };
 
 const VALID_UPGRADES = new Set(["bonus", "video"]);
+const PLAN_RANK = { individual: 1, agencia_10: 2, agencia_ilimitada: 3 };
 const GRACE_PERIOD_DAYS = 7;
 const SELF_UNLINK_LIMIT_30D = 2;
+const RETRY_BACKOFF_MINUTES = [2, 10, 30];
 
 function sortValueRecursively(value) {
   if (Array.isArray(value)) return value.map((item) => sortValueRecursively(item));
@@ -267,6 +269,86 @@ export function createLicenseHub(options = {}) {
     return Number.isFinite(exp) && Date.now() > exp;
   }
 
+  function getPlanCatalog() {
+    const overrides = vault.getSetting("plan_catalog_overrides", {}) || {};
+    const out = {};
+    for (const [tier, base] of Object.entries(PLAN_MATRIX)) {
+      const ov = overrides[tier] && typeof overrides[tier] === "object" ? overrides[tier] : {};
+      out[tier] = {
+        ...base,
+        nome_exibicao: String(ov.nome_exibicao || base.nome_exibicao),
+        max_servers: Number.isInteger(Number(ov.max_servers)) ? Number(ov.max_servers) : base.max_servers,
+        max_machines: Number.isInteger(Number(ov.max_machines)) && Number(ov.max_machines) > 0 ? Number(ov.max_machines) : base.max_machines,
+        default_price_cents: Number.isFinite(Number(ov.default_price_cents)) ? Math.max(0, Math.round(Number(ov.default_price_cents))) : 0,
+      };
+    }
+    return out;
+  }
+
+  function savePlanCatalog(input = {}) {
+    const current = vault.getSetting("plan_catalog_overrides", {}) || {};
+    const next = { ...current };
+    for (const tier of Object.keys(PLAN_MATRIX)) {
+      if (input[tier] && typeof input[tier] === "object") {
+        const src = input[tier];
+        next[tier] = {
+          nome_exibicao: String(src.nome_exibicao || PLAN_MATRIX[tier].nome_exibicao).trim(),
+          max_servers: Number.isInteger(Number(src.max_servers)) ? Number(src.max_servers) : PLAN_MATRIX[tier].max_servers,
+          max_machines: Number.isInteger(Number(src.max_machines)) && Number(src.max_machines) > 0 ? Number(src.max_machines) : PLAN_MATRIX[tier].max_machines,
+          default_price_cents: Math.max(0, Math.round(Number(src.default_price_cents) || 0)),
+        };
+      }
+    }
+    vault.setSetting("plan_catalog_overrides", next);
+    return getPlanCatalog();
+  }
+
+  function resolveExpiresAt(existingExpiresAt, explicitExpiresAt, durationDays) {
+    if (explicitExpiresAt) return explicitExpiresAt;
+    const days = Number(durationDays);
+    if (!Number.isFinite(days) || days <= 0) return existingExpiresAt || null;
+    const nowMs = Date.now();
+    const existingMs = existingExpiresAt ? Date.parse(existingExpiresAt) : NaN;
+    const baseMs = Number.isFinite(existingMs) && existingMs > nowMs ? existingMs : nowMs;
+    return new Date(baseMs + Math.round(days) * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  function recordLicenseTransaction({
+    licenseId,
+    provider,
+    integrationId = null,
+    transactionId = "",
+    productId = null,
+    offerName = null,
+    grantType = "plan",
+    planTier = null,
+    upgrades = [],
+    amountCents = 0,
+    currency = "BRL",
+  }) {
+    const txId = String(transactionId || `tx_${crypto.randomBytes(6).toString("hex")}`);
+    db.prepare(
+      `INSERT INTO license_transactions (
+        id, license_id, provider, integration_id, transaction_id, product_id, offer_name,
+        grant_type, plan_tier, upgrades_json, amount_cents, currency, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?);`,
+    ).run(
+      `ltx_${crypto.randomBytes(8).toString("hex")}`,
+      licenseId,
+      String(provider || "manual"),
+      integrationId || null,
+      txId,
+      productId ? String(productId) : null,
+      offerName ? String(offerName) : null,
+      grantType,
+      planTier || null,
+      JSON.stringify(normalizeUpgrades(upgrades)),
+      Math.max(0, Math.round(Number(amountCents) || 0)),
+      String(currency || "BRL").toUpperCase(),
+      new Date().toISOString(),
+    );
+  }
+
   function issueOrUpdateLicenseFromSale({
     email,
     customerName = "",
@@ -274,8 +356,14 @@ export function createLicenseHub(options = {}) {
     planTier = "individual",
     addUpgrades = [],
     expiresAt = null,
+    durationDays = null,
+    ruleAction = "grant_plan",
     provider = "manual",
+    integrationId = null,
     transactionId = "",
+    productId = null,
+    offerName = null,
+    isRenewal = false,
     forceNew = false,
     amountCents = 0,
     currency = "BRL",
@@ -287,16 +375,18 @@ export function createLicenseHub(options = {}) {
     const cleanEmail = String(email || "").trim().toLowerCase();
     if (!cleanEmail) throw new Error("E-mail do comprador é obrigatório.");
     const cleanPhone = String(customerPhone || "").trim();
-    const safePlan = PLAN_MATRIX[planTier] ? planTier : "individual";
-    const planMeta = PLAN_MATRIX[safePlan];
+    const catalog = getPlanCatalog();
+    const safePlan = catalog[planTier] ? planTier : "individual";
+    const planMeta = catalog[safePlan];
     const normalizedNewUpgrades = normalizeUpgrades(addUpgrades);
     const nowIso = new Date().toISOString();
     const safeAmountCents = Math.max(0, Math.round(Number(amountCents) || 0));
     const safeCurrency = String(currency || "BRL").toUpperCase();
     const safeProvider = sourceProvider || (provider === "admin" ? "manual" : provider) || "manual";
     const simInt = isSimulated ? 1 : 0;
+    const shouldForceNew = Boolean(forceNew) || ruleAction === "create_new_license";
 
-    const existing = forceNew
+    const existing = shouldForceNew
       ? null
       : db
           .prepare(
@@ -306,22 +396,35 @@ export function createLicenseHub(options = {}) {
           .get(cleanEmail);
 
     if (existing) {
-      const mergedUpgrades = Array.from(new Set([...parseUpgradesJson(existing.upgrades_json), ...normalizedNewUpgrades]));
-      const nextPlan = PLAN_MATRIX[planTier] && planTier !== "individual" ? planTier : existing.plan_tier;
-      const nextMeta = PLAN_MATRIX[nextPlan];
+      const existingUpgrades = parseUpgradesJson(existing.upgrades_json);
+      const mergedUpgrades = Array.from(new Set([...existingUpgrades, ...normalizedNewUpgrades]));
+      const existingRank = PLAN_RANK[existing.plan_tier] || 1;
+      const incomingRank = PLAN_RANK[safePlan] || 1;
+      // Nunca faz downgrade automático em recompra; add_upgrades_only preserva plano atual
+      const nextPlan =
+        ruleAction === "add_upgrades_only"
+          ? existing.plan_tier
+          : incomingRank > existingRank
+            ? safePlan
+            : existing.plan_tier;
+      const nextMeta = catalog[nextPlan] || PLAN_MATRIX[nextPlan] || PLAN_MATRIX.individual;
       const nextSim = existing.is_simulated === 0 ? 0 : simInt;
+      const nextExpiresAt = resolveExpiresAt(existing.expires_at, expiresAt, durationDays);
+      const deliveryToken = existing.delivery_token || crypto.randomBytes(16).toString("hex");
+
       db.prepare(
         `UPDATE licenses
          SET plan_tier = ?, max_servers = ?, max_machines = ?, upgrades_json = ?,
              customer_name = COALESCE(NULLIF(?, ''), customer_name),
              customer_phone = COALESCE(NULLIF(?, ''), customer_phone),
-             status = 'active', expires_at = COALESCE(?, expires_at),
+             status = 'active', expires_at = ?,
              amount_cents = CASE WHEN ? > 0 THEN ? ELSE COALESCE(amount_cents, 0) END,
              currency = COALESCE(NULLIF(?, ''), currency),
              payment_method = COALESCE(?, payment_method),
              source_provider = COALESCE(NULLIF(?, ''), source_provider),
              is_simulated = ?,
              notes = COALESCE(?, notes),
+             delivery_token = ?,
              updated_at = ?
          WHERE id = ?;`,
       ).run(
@@ -331,7 +434,7 @@ export function createLicenseHub(options = {}) {
         JSON.stringify(mergedUpgrades),
         customerName || "",
         cleanPhone,
-        expiresAt,
+        nextExpiresAt,
         safeAmountCents,
         safeAmountCents,
         safeCurrency,
@@ -339,21 +442,48 @@ export function createLicenseHub(options = {}) {
         safeProvider,
         nextSim,
         notes,
+        deliveryToken,
         nowIso,
         existing.id,
       );
-      logEvent(existing.id, "sale_updated", provider, { transactionId, addUpgrades: normalizedNewUpgrades, nextPlan });
-      return findLicenseByKey(existing.license_key);
+
+      const grantType = ruleAction === "add_upgrades_only" ? "upgrade" : isRenewal ? "renewal" : "plan";
+      recordLicenseTransaction({
+        licenseId: existing.id,
+        provider: safeProvider,
+        integrationId,
+        transactionId,
+        productId,
+        offerName,
+        grantType,
+        planTier: grantType === "upgrade" ? null : nextPlan,
+        upgrades: normalizedNewUpgrades,
+        amountCents: safeAmountCents,
+        currency: safeCurrency,
+      });
+
+      const eventType =
+        grantType === "upgrade"
+          ? "upgrade_added"
+          : grantType === "renewal"
+            ? "subscription_renewed"
+            : "sale_updated";
+      logEvent(existing.id, eventType, provider, { transactionId, addUpgrades: normalizedNewUpgrades, nextPlan });
+      const updated = findLicenseByKey(existing.license_key);
+      return { ...updated, _deliveryEventType: eventType };
     }
 
     const id = `lic_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
     const licenseKey = generateFormattedLicenseKey(safePlan);
+    const deliveryToken = crypto.randomBytes(16).toString("hex");
+    const initialExpiresAt = resolveExpiresAt(null, expiresAt, durationDays);
+
     db.prepare(
       `INSERT INTO licenses (
         id, license_key, customer_email, customer_name, customer_phone, plan_tier, status,
         max_servers, max_machines, custom_max_machines, upgrades_json, expires_at,
-        amount_cents, currency, payment_method, source_provider, is_simulated, notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        amount_cents, currency, payment_method, source_provider, is_simulated, notes, delivery_token, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
     ).run(
       id,
       licenseKey,
@@ -364,22 +494,58 @@ export function createLicenseHub(options = {}) {
       planMeta.max_servers,
       planMeta.max_machines,
       JSON.stringify(normalizedNewUpgrades),
-      expiresAt,
+      initialExpiresAt,
       safeAmountCents,
       safeCurrency,
       paymentMethod,
       safeProvider,
       simInt,
       notes,
+      deliveryToken,
       nowIso,
       nowIso,
     );
+
+    recordLicenseTransaction({
+      licenseId: id,
+      provider: safeProvider,
+      integrationId,
+      transactionId,
+      productId,
+      offerName,
+      grantType: "plan",
+      planTier: safePlan,
+      upgrades: normalizedNewUpgrades,
+      amountCents: safeAmountCents,
+      currency: safeCurrency,
+    });
+
     logEvent(id, "license_issued", provider, { transactionId, planTier: safePlan, upgrades: normalizedNewUpgrades });
-    return findLicenseByKey(licenseKey);
+    const created = findLicenseByKey(licenseKey);
+    return { ...created, _deliveryEventType: "license_issued" };
   }
 
-  function revokeLicenseByEmailOrKey({ licenseKey, email, reason = "refund", actor = "webhook" }) {
+  function revokeLicenseByEmailOrKey({
+    licenseKey,
+    email,
+    reason = "refund",
+    actor = "webhook",
+    transactionId = "",
+    productId = "",
+    provider = "",
+  }) {
     let target = licenseKey ? findLicenseByKey(licenseKey) : null;
+    if (!target && transactionId) {
+      const txRow = db
+        .prepare(
+          `SELECT l.license_key FROM license_transactions lt
+           JOIN licenses l ON l.id = lt.license_id
+           WHERE lt.transaction_id = ? ${provider ? "AND lt.provider = ?" : ""}
+           ORDER BY lt.created_at DESC LIMIT 1;`,
+        )
+        .get(...(provider ? [String(transactionId), String(provider)] : [String(transactionId)]));
+      if (txRow?.license_key) target = findLicenseByKey(txRow.license_key);
+    }
     if (!target && email) {
       const row = db
         .prepare(`SELECT * FROM licenses WHERE lower(customer_email) = ? ORDER BY created_at DESC LIMIT 1;`)
@@ -387,17 +553,201 @@ export function createLicenseHub(options = {}) {
       target = row ? findLicenseByKey(row.license_key) : null;
     }
     if (!target) return null;
+
     const nowIso = new Date().toISOString();
+
+    // Tenta revogação granular se encontrarmos uma transação específica de upgrade
+    let matchedTx = null;
+    if (transactionId) {
+      matchedTx = db
+        .prepare(`SELECT * FROM license_transactions WHERE license_id = ? AND transaction_id = ? AND status = 'active' LIMIT 1;`)
+        .get(target.id, String(transactionId));
+    }
+    if (!matchedTx && productId) {
+      matchedTx = db
+        .prepare(
+          `SELECT * FROM license_transactions
+           WHERE license_id = ? AND status = 'active' AND lower(COALESCE(product_id, '')) = lower(?)
+           ORDER BY created_at DESC LIMIT 1;`,
+        )
+        .get(target.id, String(productId));
+    }
+
+    if (matchedTx && matchedTx.grant_type === "upgrade") {
+      db.prepare(`UPDATE license_transactions SET status = 'revoked', revoked_at = ? WHERE id = ?;`).run(nowIso, matchedTx.id);
+      const txUpgrades = parseUpgradesJson(matchedTx.upgrades_json);
+      const stillActiveRows = db
+        .prepare(`SELECT upgrades_json FROM license_transactions WHERE license_id = ? AND status = 'active';`)
+        .all(target.id);
+      const activeUpgradeSet = new Set();
+      for (const r of stillActiveRows) {
+        for (const u of parseUpgradesJson(r.upgrades_json)) activeUpgradeSet.add(u);
+      }
+      const nextUpgrades = target.upgrades.filter((u) => !txUpgrades.includes(u) || activeUpgradeSet.has(u));
+      db.prepare(`UPDATE licenses SET upgrades_json = ?, updated_at = ? WHERE id = ?;`).run(
+        JSON.stringify(nextUpgrades),
+        nowIso,
+        target.id,
+      );
+      logEvent(target.id, "upgrade_revoked", actor, { reason, transactionId: matchedTx.transaction_id, upgrades: txUpgrades });
+      const updated = findLicenseByKey(target.license_key);
+      return { ...updated, _revocationScope: "upgrade", _revokedUpgrades: txUpgrades };
+    }
+
+    if (matchedTx) {
+      db.prepare(`UPDATE license_transactions SET status = 'revoked', revoked_at = ? WHERE id = ?;`).run(nowIso, matchedTx.id);
+    } else {
+      db.prepare(`UPDATE license_transactions SET status = 'revoked', revoked_at = ? WHERE license_id = ? AND status = 'active';`).run(
+        nowIso,
+        target.id,
+      );
+    }
+
     db.prepare(`UPDATE licenses SET status = 'revoked', updated_at = ? WHERE id = ?;`).run(nowIso, target.id);
-    logEvent(target.id, "license_revoked", actor, { reason });
-    return findLicenseByKey(target.license_key);
+    logEvent(target.id, "license_revoked", actor, { reason, transactionId: transactionId || undefined });
+    const updated = findLicenseByKey(target.license_key);
+    return { ...updated, _revocationScope: "license" };
   }
 
-  async function dispatchLicenseNotifications(license, { sendEmail = true, sendWhatsApp = true } = {}) {
+  function enqueueNotificationRetry({ license, channel, recipient, eventType, errorDetail }) {
+    const now = Date.now();
+    const nextRetry = new Date(now + RETRY_BACKOFF_MINUTES[0] * 60 * 1000).toISOString();
+    const nowIso = new Date(now).toISOString();
+    db.prepare(
+      `INSERT INTO notification_queue (
+        id, license_id, license_key, channel, event_type, recipient, payload_json,
+        attempts, max_attempts, status, next_retry_at, last_error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 3, 'pending', ?, ?, ?, ?);`,
+    ).run(
+      `nq_${crypto.randomBytes(8).toString("hex")}`,
+      license.id || null,
+      license.license_key || null,
+      channel,
+      eventType || "license_issued",
+      String(recipient || ""),
+      JSON.stringify({ licenseKey: license.license_key, customerEmail: license.customer_email, customerPhone: license.customer_phone }),
+      nextRetry,
+      String(errorDetail || "").slice(0, 500),
+      nowIso,
+      nowIso,
+    );
+  }
+
+  function updateLicenseDeliveryStatus(licenseId, results) {
+    if (!licenseId || String(licenseId).startsWith("lic_test")) return;
+    const nowIso = new Date().toISOString();
+    const updates = [];
+    const params = [];
+    if (results.email?.status) {
+      updates.push("last_email_status = ?");
+      params.push(results.email.status);
+    }
+    if (results.whatsapp?.status) {
+      updates.push("last_whatsapp_status = ?");
+      params.push(results.whatsapp.status);
+    }
+    if (updates.length > 0) {
+      updates.push("last_delivery_at = ?");
+      params.push(nowIso, licenseId);
+      db.prepare(`UPDATE licenses SET ${updates.join(", ")} WHERE id = ?;`).run(...params);
+    }
+  }
+
+  async function dispatchLicenseNotifications(
+    license,
+    { sendEmail = true, sendWhatsApp = true, eventType = "license_issued", enqueueOnFailure = true } = {},
+  ) {
+    const effectiveEventType = license._deliveryEventType || eventType;
     const results = { email: null, whatsapp: null };
-    if (sendEmail && license.customer_email) results.email = await emailDispatcher.sendLicenseEmail(license);
-    if (sendWhatsApp && license.customer_phone) results.whatsapp = await whatsappDispatcher.sendLicenseWhatsApp(license);
+    if (sendEmail && license.customer_email) {
+      results.email = await emailDispatcher.sendLicenseEmail(license, { eventType: effectiveEventType });
+      if (enqueueOnFailure && results.email?.status === "error") {
+        enqueueNotificationRetry({
+          license,
+          channel: "email",
+          recipient: license.customer_email,
+          eventType: effectiveEventType,
+          errorDetail: results.email.error,
+        });
+      }
+    }
+    if (sendWhatsApp && license.customer_phone) {
+      results.whatsapp = await whatsappDispatcher.sendLicenseWhatsApp(license, { eventType: effectiveEventType });
+      if (enqueueOnFailure && results.whatsapp?.status === "error") {
+        enqueueNotificationRetry({
+          license,
+          channel: "whatsapp",
+          recipient: license.customer_phone,
+          eventType: effectiveEventType,
+          errorDetail: results.whatsapp.error,
+        });
+      }
+    }
+    updateLicenseDeliveryStatus(license.id, results);
     return results;
+  }
+
+  async function processNotificationQueue({ forceNow = false } = {}) {
+    const nowIso = new Date().toISOString();
+    const dueRows = forceNow
+      ? db.prepare(`SELECT * FROM notification_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 25;`).all()
+      : db
+          .prepare(`SELECT * FROM notification_queue WHERE status = 'pending' AND next_retry_at <= ? ORDER BY next_retry_at ASC LIMIT 25;`)
+          .all(nowIso);
+
+    const summary = { processed: 0, sent: 0, rescheduled: 0, failed: 0 };
+    for (const item of dueRows) {
+      summary.processed += 1;
+      const lic = item.license_key ? findLicenseByKey(item.license_key) : null;
+      if (!lic) {
+        db.prepare(`UPDATE notification_queue SET status = 'failed', last_error = 'Licença não encontrada', updated_at = ? WHERE id = ?;`).run(
+          nowIso,
+          item.id,
+        );
+        summary.failed += 1;
+        continue;
+      }
+      const res =
+        item.channel === "whatsapp"
+          ? await whatsappDispatcher.sendLicenseWhatsApp(lic, { eventType: item.event_type })
+          : await emailDispatcher.sendLicenseEmail(lic, { eventType: item.event_type });
+
+      updateLicenseDeliveryStatus(lic.id, { [item.channel]: res });
+
+      if (res?.ok) {
+        db.prepare(`UPDATE notification_queue SET status = 'sent', updated_at = ? WHERE id = ?;`).run(new Date().toISOString(), item.id);
+        summary.sent += 1;
+      } else {
+        const nextAttempts = Number(item.attempts || 0) + 1;
+        const maxAttempts = Number(item.max_attempts || 3);
+        const isTerminal = nextAttempts >= maxAttempts || res?.status === "skipped";
+        const waitMin = RETRY_BACKOFF_MINUTES[Math.min(RETRY_BACKOFF_MINUTES.length - 1, nextAttempts)] || 30;
+        const nextRetryAt = new Date(Date.now() + waitMin * 60 * 1000).toISOString();
+        db.prepare(
+          `UPDATE notification_queue
+           SET attempts = ?, status = ?, next_retry_at = ?, last_error = ?, updated_at = ?
+           WHERE id = ?;`,
+        ).run(
+          nextAttempts,
+          isTerminal ? "failed" : "pending",
+          nextRetryAt,
+          String(res?.error || "Falha no reenvio").slice(0, 500),
+          new Date().toISOString(),
+          item.id,
+        );
+        if (isTerminal) summary.failed += 1;
+        else summary.rescheduled += 1;
+      }
+    }
+    return summary;
+  }
+
+  let retryTimer = null;
+  if (options.enableNotificationRetryWorker !== false) {
+    retryTimer = setInterval(() => {
+      void processNotificationQueue().catch(() => {});
+    }, 60 * 1000);
+    retryTimer.unref?.();
   }
 
   const router = express.Router();
@@ -521,7 +871,8 @@ export function createLicenseHub(options = {}) {
 
   router.use(
     createLicenseAdminRouter({
-      db, keys, emailDispatcher, whatsappDispatcher, analyticsService, PLAN_MATRIX, parseUpgradesJson, normalizeUpgrades,
+      db, keys, emailDispatcher, whatsappDispatcher, analyticsService, PLAN_MATRIX, getPlanCatalog, savePlanCatalog,
+      processNotificationQueue, parseUpgradesJson, normalizeUpgrades,
       listActiveDevices, findLicenseByKey, logEvent, issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey,
       dispatchLicenseNotifications, buildLicenseEmailPayload, parseMoneyToCents, normalizePaymentMethod, requireAdmin: auth.requireAdmin,
     }),
@@ -530,8 +881,13 @@ export function createLicenseHub(options = {}) {
 
   const hubApi = {
     router, db, vault, auth, keys, emailDispatcher, whatsappDispatcher, analyticsService,
-    logNotification, dispatchLicenseNotifications, findLicenseByKey, listActiveDevices, signCertificate,
-    issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey, requireAdmin: auth.requireAdmin, close: () => db.close(),
+    logNotification, dispatchLicenseNotifications, processNotificationQueue, getPlanCatalog, savePlanCatalog,
+    findLicenseByKey, listActiveDevices, signCertificate,
+    issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey, requireAdmin: auth.requireAdmin,
+    close: () => {
+      if (retryTimer) clearInterval(retryTimer);
+      db.close();
+    },
   };
 
   router.use(createServerClaimsRouter(hubApi));

@@ -55,35 +55,34 @@ registerView("releases", {
         </div>
 
         <section class="panel-card">
-          <div class="card-header">
-            <h2>Importador Rápido do GitHub Release</h2>
-            <p class="muted">Preenche automaticamente versão, changelog, assets e hashes SHA-256.</p>
+          <div class="card-header row-between">
+            <div>
+              <h2>Importar & Publicar Release</h2>
+              <p class="muted">Importe uma release do GitHub em 1 clique — versão, changelog, instaladores e SHA-256 são preenchidos automaticamente.</p>
+            </div>
           </div>
-          <div class="grid-3">
+          <div class="grid-3 mb-8">
             <label class="field">
               <span>Repositório (owner/repo)</span>
               <input type="text" id="gh-repo" placeholder="exemplo-org/criativo-app" />
             </label>
             <label class="field">
               <span>Tag (vazia = latest)</span>
-              <input type="text" id="gh-tag" placeholder="v1.0.1" />
+              <input type="text" id="gh-tag" placeholder="v1.0.4" />
             </label>
             <div class="field" style="justify-content:flex-end">
               <span>&nbsp;</span>
               <button type="button" class="btn btn-secondary" id="btn-import-gh">Importar do GitHub</button>
             </div>
           </div>
-        </section>
 
-        <section class="panel-card">
-          <div class="card-header">
-            <h2>Publicar Nova Release</h2>
-          </div>
+          <hr class="divider" />
+
           <form id="rel-publish-form" class="form-stack">
             <div class="grid-3">
               <label class="field">
                 <span>Versão *</span>
-                <input type="text" id="rel-version" required placeholder="1.0.1" />
+                <input type="text" id="rel-version" required placeholder="1.0.4" />
               </label>
               <label class="field">
                 <span>Canal</span>
@@ -103,53 +102,30 @@ registerView("releases", {
               <textarea id="rel-changelog" rows="3" placeholder="- Melhorias de estabilidade e desempenho..."></textarea>
             </label>
 
-            <div class="grid-2">
-              <label class="field">
-                <span>Windows (.exe) URL HTTPS</span>
-                <input type="url" id="rel-win-url" placeholder="https://github.com/exemplo/releases/Setup.exe" />
-              </label>
-              <label class="field">
-                <span>Windows SHA-256</span>
-                <input type="text" id="rel-win-sha" class="mono-input" placeholder="64 caracteres hexadecimais" />
-              </label>
-            </div>
-            <div class="grid-2">
-              <label class="field">
-                <span>macOS (.dmg) URL HTTPS</span>
-                <input type="url" id="rel-mac-url" placeholder="https://github.com/exemplo/releases/App.dmg" />
-              </label>
-              <label class="field">
-                <span>macOS SHA-256</span>
-                <input type="text" id="rel-mac-sha" class="mono-input" placeholder="64 caracteres hexadecimais" />
-              </label>
-            </div>
-            <div class="grid-2">
-              <label class="field">
-                <span>Linux (.AppImage) URL HTTPS</span>
-                <input type="url" id="rel-lin-url" placeholder="https://github.com/exemplo/releases/App.AppImage" />
-              </label>
-              <label class="field">
-                <span>Linux SHA-256</span>
-                <input type="text" id="rel-lin-sha" class="mono-input" placeholder="64 caracteres hexadecimais" />
-              </label>
-            </div>
-
-            <div class="grid-2">
-              <label class="field">
-                <span>JSON Avançado de Artefatos (opcional)</span>
-                <textarea id="rel-artifacts-json" class="mono-input" rows="5" placeholder="[]"></textarea>
-              </label>
+            <details class="details-box">
+              <summary>Publicação Manual / Artefatos Individuais / Hot-Bundle JSON (Avançado)</summary>
               <div class="form-stack">
-                <label class="field">
-                  <span>Hot-Bundle JSON (arquivo .json opcional)</span>
-                  <input type="file" id="rel-hot-file" accept=".json,application/json" />
-                </label>
-                <label class="field">
-                  <span>Ou cole o Hot-Bundle JSON</span>
-                  <textarea id="rel-hot-json" class="mono-input" rows="3" placeholder='{"version":"1.0.1","files":{}}'></textarea>
-                </label>
+                <div class="grid-2">
+                  <label class="field"><span>Windows (.exe) URL HTTPS</span><input type="url" id="rel-win-url" placeholder="https://github.com/exemplo/releases/Setup.exe" /></label>
+                  <label class="field"><span>Windows SHA-256</span><input type="text" id="rel-win-sha" class="mono-input" placeholder="64 caracteres hexadecimais" /></label>
+                </div>
+                <div class="grid-2">
+                  <label class="field"><span>macOS (.dmg) URL HTTPS</span><input type="url" id="rel-mac-url" placeholder="https://github.com/exemplo/releases/App.dmg" /></label>
+                  <label class="field"><span>macOS SHA-256</span><input type="text" id="rel-mac-sha" class="mono-input" placeholder="64 caracteres hexadecimais" /></label>
+                </div>
+                <div class="grid-2">
+                  <label class="field"><span>Linux (.AppImage) URL HTTPS</span><input type="url" id="rel-lin-url" placeholder="https://github.com/exemplo/releases/App.AppImage" /></label>
+                  <label class="field"><span>Linux SHA-256</span><input type="text" id="rel-lin-sha" class="mono-input" placeholder="64 caracteres hexadecimais" /></label>
+                </div>
+                <div class="grid-2">
+                  <label class="field"><span>JSON Avançado de Artefatos</span><textarea id="rel-artifacts-json" class="mono-input" rows="5" placeholder="[]"></textarea></label>
+                  <div class="form-stack">
+                    <label class="field"><span>Hot-Bundle JSON (.json)</span><input type="file" id="rel-hot-file" accept=".json,application/json" /></label>
+                    <label class="field"><span>Ou cole o Hot-Bundle JSON</span><textarea id="rel-hot-json" class="mono-input" rows="3" placeholder='{"version":"1.0.4","files":{}}'></textarea></label>
+                  </div>
+                </div>
               </div>
-            </div>
+            </details>
 
             <div class="btn-row">
               <button type="submit" class="btn btn-primary">Publicar Release</button>

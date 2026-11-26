@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 44" fill="none">
+  <rect x="2" y="4" width="36" height="36" rx="10" fill="#14B8A6"/>
+  <path d="M13 13H17.3V21L24 13H28.8L21.8 21.2L29 31H24L19.1 23.9L17.3 25.9V31H13V13Z" fill="#FFFFFF"/>
+  <text x="48" y="28" fill="currentColor" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing="-0.4">Kirvano</text>
+</svg>

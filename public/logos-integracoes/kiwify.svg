@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 44" fill="none">
+  <rect x="2" y="4" width="36" height="36" rx="10" fill="#22C55E"/>
+  <path d="M13.5 13H17.7V20.8L24.2 13H29L22.2 21.1L29.2 31H24.3L19.4 23.9L17.7 25.8V31H13.5V13Z" fill="#FFFFFF"/>
+  <text x="48" y="28" fill="currentColor" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="700" letter-spacing="-0.4">Kiwify</text>
+</svg>
