@@ -18,11 +18,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PKG_VERSION = (() => {
   try {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "1.0.4";
+    return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "2.0.0";
   } catch {
-    return "1.0.4";
+    return "2.0.0";
   }
 })();
+const BUILD_ID = `${PKG_VERSION}-${Date.now().toString(36)}`;
 
 export function createPainelApp(options = {}) {
   const PUBLIC_DIR = options.publicDir || path.join(__dirname, "public");
@@ -38,7 +39,13 @@ export function createPainelApp(options = {}) {
   app.use(express.urlencoded({ extended: true, limit: "4mb", verify: captureWebhookRawBody }));
 
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: PKG_VERSION, service: "criativo-ai-studio-painel", timestamp: new Date().toISOString() });
+    res.json({
+      status: "ok",
+      version: PKG_VERSION,
+      build: BUILD_ID,
+      service: "criativo-ai-studio-painel",
+      timestamp: new Date().toISOString(),
+    });
   });
 
   const licenseHub = createLicenseHub(options.licenseHub || {});
@@ -86,8 +93,39 @@ export function createPainelApp(options = {}) {
     return res.status(404).json({ error: "delivery_page_not_found" });
   });
 
+  const sendIndexHtml = (res) => {
+    const indexPath = path.join(PUBLIC_DIR, "index.html");
+    if (!fs.existsSync(indexPath)) {
+      return res.status(404).json({ error: "ui_not_found" });
+    }
+    const html = fs.readFileSync(indexPath, "utf8").replaceAll("__BUILD_ID__", BUILD_ID);
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  };
+
+  app.get("/", (_req, res) => sendIndexHtml(res));
+  app.get("/index.html", (_req, res) => sendIndexHtml(res));
+
   if (fs.existsSync(PUBLIC_DIR)) {
-    app.use(express.static(PUBLIC_DIR, { maxAge: "1h" }));
+    app.use(
+      express.static(PUBLIC_DIR, {
+        etag: true,
+        lastModified: true,
+        index: false,
+        setHeaders: (res, filePath) => {
+          if (/\.(html|js|mjs|css)$/i.test(filePath)) {
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+          } else {
+            res.setHeader("Cache-Control", "public, max-age=3600");
+          }
+        },
+      }),
+    );
   }
 
   app.get("*", (req, res) => {
@@ -101,11 +139,7 @@ export function createPainelApp(options = {}) {
     ) {
       return res.status(404).json({ error: "asset_not_found" });
     }
-    const indexPath = path.join(PUBLIC_DIR, "index.html");
-    if (fs.existsSync(indexPath)) {
-      return res.sendFile(indexPath);
-    }
-    return res.status(404).json({ error: "ui_not_found" });
+    return sendIndexHtml(res);
   });
 
   return { app, licenseHub };

@@ -106,8 +106,8 @@ if [ "$RESTARTED" -eq 1 ]; then
     ENV_PORT="$(grep -E '^PORT=' .env | head -n1 | cut -d= -f2- | tr -d '"\r ' || true)"
     [ -n "$ENV_PORT" ] && LISTEN_PORT="$ENV_PORT"
   fi
-  if command -v curl >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:${LISTEN_PORT}/health" >/dev/null 2>&1; then
-    echo "💚 Healthcheck OK em http://127.0.0.1:${LISTEN_PORT}/health"
+  if command -v curl >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:${LISTEN_PORT}/api/health" >/dev/null 2>&1; then
+    echo "💚 Healthcheck OK em http://127.0.0.1:${LISTEN_PORT}/api/health"
   else
     echo "ℹ️  Reinício solicitado. Verifique os logs no aaPanel caso esteja subindo agora."
   fi

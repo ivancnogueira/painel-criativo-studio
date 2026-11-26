@@ -141,11 +141,13 @@ export function confirmDialog({
 
 export function ensureStylesheet(href) {
   if (!href) return;
-  const existing = document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
+  const existing = document.querySelector(`link[rel="stylesheet"][data-base-href="${href}"]`);
   if (existing) return;
+  const build = window.__PAINEL_BUILD__ && window.__PAINEL_BUILD__ !== "__BUILD_ID__" ? window.__PAINEL_BUILD__ : "2.0.0";
   const link = document.createElement("link");
   link.rel = "stylesheet";
-  link.href = href;
+  link.dataset.baseHref = href;
+  link.href = `${href}${href.includes("?") ? "&" : "?"}v=${encodeURIComponent(build)}`;
   document.head.appendChild(link);
 }
 

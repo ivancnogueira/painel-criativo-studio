@@ -457,6 +457,27 @@
   .platform-card:hover { border-color: var(--accent-orange); transform: translateY(-2px); }
 }
 .platform-card:active { transform: scale(0.98); }
+.platform-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.platform-icon-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+}
+.platform-brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
 .platform-logo-img {
   height: 30px;
   width: auto;

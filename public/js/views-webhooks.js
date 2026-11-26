@@ -46,10 +46,10 @@ function stopListenTimers() {
   }
 }
 
-function platformLogoHtml(platform, sizeClass = "platform-logo-img") {
+function platformLogoHtml(platform) {
   const logoSrc = escapeHtml(platform?.logo || `/logos-integracoes/${platform?.id || "custom"}.svg`);
   const nameEsc = escapeHtml(platform?.name || platform?.platformName || "Plataforma");
-  return `<img src="${logoSrc}" alt="${nameEsc}" class="${sizeClass}" loading="lazy" />`;
+  return `<span class="platform-brand-lockup"><img src="${logoSrc}" alt="" class="platform-icon-img" loading="lazy" /><span class="platform-brand-name">${nameEsc}</span></span>`;
 }
 
 function statusBadgeHtml(d) {

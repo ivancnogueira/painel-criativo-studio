@@ -382,5 +382,17 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
     assert.equal(retryJson.sent, 1);
     assert.equal(sentEmails.length, 1);
     assert.equal(licenseHub.findLicenseByKey(created.license.license_key).last_email_status, "sent");
+
+    // Verifica no-store e injeção de BUILD_ID em HTML e JS
+    const rootRes = await fetch(`${baseUrl}/`);
+    assert.equal(rootRes.status, 200);
+    assert.match(rootRes.headers.get("cache-control") || "", /no-store/);
+    const rootHtml = await rootRes.text();
+    assert.doesNotMatch(rootHtml, /__BUILD_ID__/);
+    assert.match(rootHtml, /window\.__PAINEL_BUILD__/);
+
+    const jsRes = await fetch(`${baseUrl}/js/views-webhooks.js`);
+    assert.equal(jsRes.status, 200);
+    assert.match(jsRes.headers.get("cache-control") || "", /no-store/);
   });
 });

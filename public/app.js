@@ -5,14 +5,16 @@ import { initTheme, toggleThemeAnimated } from "./js/core/theme.js";
 import { initCommandPalette } from "./js/core/command-palette.js";
 import { initAuthFlow } from "./js/core/login.js";
 
+const BUILD_QS = `?v=${encodeURIComponent(window.__PAINEL_BUILD__ && window.__PAINEL_BUILD__ !== "__BUILD_ID__" ? window.__PAINEL_BUILD__ : "2.0.0")}`;
+
 const OPTIONAL_VIEW_MODULES = [
-  "/js/activity-rail.js",
-  "/js/views-dashboard.js",
-  "/js/views-licenses.js",
-  "/js/views-webhooks.js",
-  "/js/views-messaging.js",
-  "/js/views-releases.js",
-  "/js/views-security.js",
+  `/js/activity-rail.js${BUILD_QS}`,
+  `/js/views-dashboard.js${BUILD_QS}`,
+  `/js/views-licenses.js${BUILD_QS}`,
+  `/js/views-webhooks.js${BUILD_QS}`,
+  `/js/views-messaging.js${BUILD_QS}`,
+  `/js/views-releases.js${BUILD_QS}`,
+  `/js/views-security.js${BUILD_QS}`,
 ];
 
 let shellInitialized = false;
