@@ -250,7 +250,7 @@ async function confirmAndDeleteLicense(lic, onDeleted) {
   if (!ok) return;
 
   try {
-    await api(`/api/admin/licenses/${encodeURIComponent(lic.license_key)}`, { method: "DELETE" });
+    await api(`/api/admin/licenses/${encodeURIComponent(lic.license_key)}/delete`, { method: "POST" });
     showToast("Cliente, licença e registros financeiros removidos!", "success");
     await refreshDashboardData(["licenses", "analytics", "overview", "webhooks", "notificationLogs"]);
     if (typeof onDeleted === "function") await onDeleted();

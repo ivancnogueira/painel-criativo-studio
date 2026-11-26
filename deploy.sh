@@ -91,8 +91,17 @@ fi
 # 5. Reinício automático caso gerenciador conhecido seja detectado
 RESTARTED=0
 AAPANEL_SCRIPT="/www/server/nodejs/vhost/scripts/${APP_NAME}.sh"
+if [ ! -x "$AAPANEL_SCRIPT" ] && [ -d "/www/server/nodejs/vhost/scripts" ]; then
+  for candidate_script in /www/server/nodejs/vhost/scripts/*.sh; do
+    [ -x "$candidate_script" ] || continue
+    if grep -Fq "$CURRENT_DIR" "$candidate_script" 2>/dev/null; then
+      AAPANEL_SCRIPT="$candidate_script"
+      break
+    fi
+  done
+fi
 if [ -x "$AAPANEL_SCRIPT" ]; then
-  echo "🔄 Reiniciando projeto Node no aaPanel ($APP_NAME)..."
+  echo "🔄 Reiniciando projeto Node no aaPanel ($(basename "$AAPANEL_SCRIPT" .sh))..."
   bash "$AAPANEL_SCRIPT" restart && RESTARTED=1 || true
 elif command -v pm2 >/dev/null 2>&1 && pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   echo "🔄 Reiniciando processo PM2 ($APP_NAME)..."

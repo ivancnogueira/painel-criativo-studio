@@ -303,13 +303,16 @@ export function createLicenseAdminRouter({
     return res.json({ ok: true, status: revoked.status });
   });
 
-  router.delete("/admin/licenses/:key", requireAdmin, (req, res) => {
+  function handleDeleteLicense(req, res) {
     const deleted = deleteLicenseCompletely(req.params.key);
     if (!deleted) {
       return res.status(404).json({ error: "not_found", message: "Licença não encontrada." });
     }
     return res.json({ ok: true, deleted });
-  });
+  }
+
+  router.delete("/admin/licenses/:key", requireAdmin, handleDeleteLicense);
+  router.post("/admin/licenses/:key/delete", requireAdmin, handleDeleteLicense);
 
   router.post("/admin/licenses/:key/reactivate", requireAdmin, (req, res) => {
     const row = findLicenseByKey(req.params.key);

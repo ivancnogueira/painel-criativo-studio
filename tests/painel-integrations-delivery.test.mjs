@@ -693,8 +693,8 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
     const lic1 = (await lic1Res.json()).license;
     const lic2 = (await lic2Res.json()).license;
 
-    const del1Res = await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(lic1.license_key)}`, {
-      method: "DELETE",
+    const del1Res = await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(lic1.license_key)}/delete`, {
+      method: "POST",
       headers: { Cookie: cookie },
     });
     assert.equal(del1Res.status, 200);

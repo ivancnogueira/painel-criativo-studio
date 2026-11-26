@@ -87,6 +87,13 @@ export function createPainelApp(options = {}) {
     });
   });
 
+  app.use("/api", (_req, res) =>
+    res.status(404).json({
+      error: "api_route_not_found",
+      message: "Rota de API não encontrada. Se você acabou de atualizar o painel, reinicie o processo Node no servidor.",
+    }),
+  );
+
   app.get("/entrega/:token", (_req, res) => {
     const entregaPath = path.join(PUBLIC_DIR, "entrega.html");
     if (fs.existsSync(entregaPath)) {
