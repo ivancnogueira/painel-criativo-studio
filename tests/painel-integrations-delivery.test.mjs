@@ -834,5 +834,37 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
       })
     ).json();
     assert.equal(licDetails.license.status, "active");
+
+    // 4. Edita o valor financeiro do registro restante de R$ 125,98 para R$ 97,00 com sincronização na licença
+    const updRes = await fetch(`${baseUrl}/api/admin/webhooks/deliveries/${encodeURIComponent(paidJson.id)}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        amount_cents: 9700,
+        currency: "BRL",
+        payment_method: "credit_card",
+        sync_license: true,
+      }),
+    });
+    assert.equal(updRes.status, 200);
+    const updJson = await updRes.json();
+    assert.equal(updJson.ok, true);
+    assert.equal(updJson.delivery.amount_cents, 9700);
+
+    const salesAfterEdit = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesAfterEdit.kpis.grossRevenueCents, 9700);
+    assert.equal(salesAfterEdit.kpis.netRevenueCents, 9700);
+
+    const licAfterEdit = await (
+      await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(paidJson.license_key)}/details`, {
+        headers: { Cookie: cookie },
+      })
+    ).json();
+    assert.equal(licAfterEdit.license.amount_cents, 9700);
+    const tx134 = licAfterEdit.transactions.find((t) => t.transaction_id === "134304273");
+    assert.ok(tx134);
+    assert.equal(tx134.amount_cents, 9700);
   });
 });

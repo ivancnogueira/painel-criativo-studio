@@ -2,6 +2,7 @@ import {
   api,
   bindFloatingTooltips,
   closeDrawer,
+  closeModal,
   confirmDialog,
   copyText,
   ensureStylesheet,
@@ -10,6 +11,7 @@ import {
   formatMoney,
   hideFloatingTooltip,
   openDrawer,
+  openModal,
   setButtonLoading,
   showToast,
 } from "./core/api.js";
@@ -19,6 +21,7 @@ import { registerView } from "./core/router.js";
 ensureStylesheet("/styles/views.css");
 
 const ICON_EYE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_EDIT = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
 const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
 const PLAN_LABELS = {
@@ -126,6 +129,84 @@ async function confirmAndDeleteDelivery(d, onDeleted) {
   }
 }
 
+function openEditDeliveryAmountModal(d, onSaved) {
+  const targetId = d?.id || d?.delivery_key;
+  if (!targetId) return;
+  hideFloatingTooltip();
+  const amountVal = ((Number(d.amount_cents) || 0) / 100).toFixed(2);
+  const cur = String(d.currency || "BRL").toUpperCase();
+  const method = String(d.payment_method || "credit_card");
+  const hasLic = Boolean(d.license_key);
+
+  openModal({
+    title: "Editar Valor do Registro",
+    subtitle: `${String(d.provider || "WEBHOOK").toUpperCase()} · ${d.transaction_id || targetId}`,
+    width: 460,
+    bodyHtml: `
+      <form id="edit-del-amount-form" class="form-stack">
+        <div class="grid-3">
+          <label class="field"><span>Valor Líquido *</span>
+            <input type="number" id="ed-del-amount" step="0.01" min="0" required value="${escapeHtml(amountVal)}" />
+          </label>
+          <label class="field"><span>Moeda</span>
+            <select id="ed-del-currency">
+              <option value="BRL" ${cur === "BRL" ? "selected" : ""}>BRL</option>
+              <option value="USD" ${cur === "USD" ? "selected" : ""}>USD</option>
+              <option value="EUR" ${cur === "EUR" ? "selected" : ""}>EUR</option>
+            </select>
+          </label>
+          <label class="field"><span>Método</span>
+            <select id="ed-del-method">
+              <option value="pix" ${method === "pix" ? "selected" : ""}>PIX</option>
+              <option value="credit_card" ${method === "credit_card" ? "selected" : ""}>Cartão</option>
+              <option value="boleto" ${method === "boleto" ? "selected" : ""}>Boleto</option>
+              <option value="debit" ${method === "debit" ? "selected" : ""}>Débito</option>
+              <option value="paypal" ${method === "paypal" ? "selected" : ""}>PayPal</option>
+              <option value="manual" ${method === "manual" ? "selected" : ""}>Manual</option>
+            </select>
+          </label>
+        </div>
+        ${
+          hasLic
+            ? `<label class="check-pill"><input type="checkbox" id="ed-del-sync-lic" checked /> Atualizar valor também na licença vinculada (${escapeHtml(d.license_key)})</label>`
+            : ""
+        }
+        <div class="btn-row" style="justify-content:flex-end;">
+          <button type="button" class="btn btn-ghost" id="btn-cancel-ed-del">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-ed-del">Salvar Valor</button>
+        </div>
+      </form>
+    `,
+    onMount: (modalRoot) => {
+      modalRoot.querySelector("#ed-del-amount")?.focus();
+      modalRoot.querySelector("#btn-cancel-ed-del")?.addEventListener("click", closeModal);
+      modalRoot.querySelector("#edit-del-amount-form")?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = modalRoot.querySelector("#btn-save-ed-del");
+        setButtonLoading(btn, true, "Salvando...");
+        const rawAmount = Number(modalRoot.querySelector("#ed-del-amount")?.value || 0);
+        const amount_cents = Math.max(0, Math.round((Number.isFinite(rawAmount) ? rawAmount : 0) * 100));
+        const currency = modalRoot.querySelector("#ed-del-currency")?.value || "BRL";
+        const payment_method = modalRoot.querySelector("#ed-del-method")?.value || "credit_card";
+        const sync_license = hasLic ? Boolean(modalRoot.querySelector("#ed-del-sync-lic")?.checked) : false;
+        try {
+          await api(`/api/admin/webhooks/deliveries/${encodeURIComponent(targetId)}/update`, {
+            method: "POST",
+            body: JSON.stringify({ amount_cents, currency, payment_method, sync_license }),
+          });
+          closeModal();
+          showToast("Valor atualizado!", "success");
+          await refreshDashboardData(["deliveries", "analytics", "licenses", "overview"]);
+          if (typeof onSaved === "function") await onSaved();
+        } catch (err) {
+          showToast(`Erro ao atualizar valor: ${err.message}`, "error");
+          setButtonLoading(btn, false);
+        }
+      });
+    },
+  });
+}
+
 async function openDeliveryInspector(deliveryId, onAfterAction) {
   try {
     const res = await api(`/api/admin/webhooks/deliveries/${encodeURIComponent(deliveryId)}`);
@@ -194,12 +275,19 @@ async function openDeliveryInspector(deliveryId, onAfterAction) {
                 ? ""
                 : `<button type="button" class="btn btn-primary btn-sm" id="btn-replay-delivery">Reprocessar (Replay)</button>`
             }
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-edit-delivery-amount">Editar Valor</button>
             <button type="button" class="btn btn-danger btn-sm" id="btn-delete-delivery">Excluir Log</button>
           </div>
         </div>
         <pre class="json-viewer">${escapeHtml(prettyJson)}</pre>`,
       onMount: (root) => {
         root.querySelector("#btn-copy-raw-json")?.addEventListener("click", () => void copyText(prettyJson, "Payload JSON copiado!"));
+        root.querySelector("#btn-edit-delivery-amount")?.addEventListener("click", () => {
+          openEditDeliveryAmountModal(d, async () => {
+            if (typeof onAfterAction === "function") await onAfterAction();
+            await openDeliveryInspector(d.id, onAfterAction);
+          });
+        });
         root.querySelector("#btn-delete-delivery")?.addEventListener("click", () => {
           void confirmAndDeleteDelivery(d, async () => {
             closeDrawer();
@@ -1278,6 +1366,7 @@ registerView("webhooks", {
               <td>
                 <div class="action-icon-group">
                   <button type="button" class="action-icon-btn" data-inspect-delivery="${idEsc}" data-tooltip="Inspecionar payload" aria-label="Inspecionar payload">${ICON_EYE}</button>
+                  <button type="button" class="action-icon-btn" data-edit-delivery="${idEsc}" data-tooltip="Editar valor financeiro" aria-label="Editar valor financeiro">${ICON_EDIT}</button>
                   <button type="button" class="action-icon-btn action-icon-btn--danger" data-delete-delivery="${idEsc}" data-tooltip="Excluir log e registro financeiro" aria-label="Excluir log e registro financeiro">${ICON_TRASH}</button>
                 </div>
               </td>
@@ -1289,6 +1378,13 @@ registerView("webhooks", {
             e.stopPropagation();
             hideFloatingTooltip();
             void openDeliveryInspector(btn.dataset.inspectDelivery, loadDeliveries);
+          });
+        });
+        tbody.querySelectorAll("[data-edit-delivery]").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const item = rows.find((r) => String(r.id || r.delivery_key) === String(btn.dataset.editDelivery));
+            if (item) openEditDeliveryAmountModal(item, loadDeliveries);
           });
         });
         tbody.querySelectorAll("[data-delete-delivery]").forEach((btn) => {

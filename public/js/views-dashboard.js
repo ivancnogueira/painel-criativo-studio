@@ -9,6 +9,7 @@ import {
   formatMoney,
   hideFloatingTooltip,
   openModal,
+  setButtonLoading,
   showToast,
 } from "./core/api.js";
 import { refreshDashboardData } from "./core/state.js";
@@ -17,6 +18,7 @@ import { renderCashFlowChart, renderGoalGaugeSvg, renderPlanDonutChart, renderTr
 
 const ICON_EYE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const ICON_KEY = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
+const ICON_EDIT = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
 const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
 const RANGE_OPTIONS = [
@@ -194,6 +196,7 @@ function renderSalesRowsHtml(sales) {
             <div class="action-icon-group">
               <button type="button" class="action-icon-btn" data-inspect-sale="${escapeHtml(s.id)}" data-sale-source="${escapeHtml(s.source)}" data-tooltip="Inspecionar venda" aria-label="Inspecionar venda">${ICON_EYE}</button>
               ${s.licenseKey ? `<button type="button" class="action-icon-btn" data-view-license="${escapeHtml(s.licenseKey)}" data-tooltip="Ver licença" aria-label="Ver licença">${ICON_KEY}</button>` : ""}
+              <button type="button" class="action-icon-btn" data-edit-sale="${escapeHtml(s.id)}" data-sale-source="${escapeHtml(s.source)}" data-tooltip="Editar valor financeiro" aria-label="Editar valor financeiro">${ICON_EDIT}</button>
               <button type="button" class="action-icon-btn action-icon-btn--danger" data-delete-sale="${escapeHtml(s.id)}" data-sale-source="${escapeHtml(s.source)}" data-tooltip="${s.source === "manual" ? "Zerar valor financeiro" : "Excluir registro financeiro"}" aria-label="${s.source === "manual" ? "Zerar valor financeiro" : "Excluir registro financeiro"}">${ICON_TRASH}</button>
             </div>
           </td>
@@ -201,6 +204,89 @@ function renderSalesRowsHtml(sales) {
       `;
     })
     .join("");
+}
+
+function openEditSaleAmountModal(sale) {
+  if (!sale) return;
+  const amountVal = ((Number(sale.amountCents) || 0) / 100).toFixed(2);
+  const cur = String(sale.currency || "BRL").toUpperCase();
+  const method = String(sale.paymentMethod || (sale.source === "manual" ? "manual" : "credit_card"));
+  const showSyncCheckbox = sale.source !== "manual" && Boolean(sale.licenseKey);
+
+  openModal({
+    title: "Editar Valor Financeiro",
+    subtitle: `${sale.buyerName || sale.buyerEmail || "Comprador"} · ${String(sale.source || "manual").toUpperCase()}`,
+    width: 460,
+    bodyHtml: `
+      <form id="edit-sale-amount-form" class="form-stack">
+        <div class="grid-3">
+          <label class="field"><span>Valor Líquido *</span>
+            <input type="number" id="edit-sale-amount" step="0.01" min="0" required value="${escapeHtml(amountVal)}" />
+          </label>
+          <label class="field"><span>Moeda</span>
+            <select id="edit-sale-currency">
+              <option value="BRL" ${cur === "BRL" ? "selected" : ""}>BRL</option>
+              <option value="USD" ${cur === "USD" ? "selected" : ""}>USD</option>
+              <option value="EUR" ${cur === "EUR" ? "selected" : ""}>EUR</option>
+            </select>
+          </label>
+          <label class="field"><span>Método</span>
+            <select id="edit-sale-method">
+              <option value="pix" ${method === "pix" ? "selected" : ""}>PIX</option>
+              <option value="credit_card" ${method === "credit_card" ? "selected" : ""}>Cartão</option>
+              <option value="boleto" ${method === "boleto" ? "selected" : ""}>Boleto</option>
+              <option value="debit" ${method === "debit" ? "selected" : ""}>Débito</option>
+              <option value="paypal" ${method === "paypal" ? "selected" : ""}>PayPal</option>
+              <option value="manual" ${method === "manual" ? "selected" : ""}>Manual</option>
+            </select>
+          </label>
+        </div>
+        ${
+          showSyncCheckbox
+            ? `<label class="check-pill"><input type="checkbox" id="edit-sale-sync-lic" checked /> Atualizar valor também na licença vinculada (${escapeHtml(sale.licenseKey)})</label>`
+            : ""
+        }
+        <div class="btn-row" style="justify-content:flex-end;">
+          <button type="button" class="btn btn-ghost" id="btn-cancel-edit-sale">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-edit-sale">Salvar Valor</button>
+        </div>
+      </form>
+    `,
+    onMount: (modalRoot) => {
+      modalRoot.querySelector("#edit-sale-amount")?.focus();
+      modalRoot.querySelector("#btn-cancel-edit-sale")?.addEventListener("click", closeModal);
+      modalRoot.querySelector("#edit-sale-amount-form")?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = modalRoot.querySelector("#btn-save-edit-sale");
+        setButtonLoading(btn, true, "Salvando...");
+        const rawAmount = Number(modalRoot.querySelector("#edit-sale-amount")?.value || 0);
+        const amount_cents = Math.max(0, Math.round((Number.isFinite(rawAmount) ? rawAmount : 0) * 100));
+        const currency = modalRoot.querySelector("#edit-sale-currency")?.value || "BRL";
+        const payment_method = modalRoot.querySelector("#edit-sale-method")?.value || "credit_card";
+        const sync_license = showSyncCheckbox ? Boolean(modalRoot.querySelector("#edit-sale-sync-lic")?.checked) : true;
+        try {
+          if (sale.source !== "manual") {
+            await api(`/api/admin/webhooks/deliveries/${encodeURIComponent(sale.id)}/update`, {
+              method: "POST",
+              body: JSON.stringify({ amount_cents, currency, payment_method, sync_license }),
+            });
+          } else if (sale.licenseKey) {
+            await api(`/api/admin/licenses/${encodeURIComponent(sale.licenseKey)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ amount_cents, currency, payment_method }),
+            });
+          }
+          closeModal();
+          showToast("Valor financeiro atualizado!", "success");
+          await refreshDashboardData(["analytics", "deliveries", "licenses", "overview"]);
+          void renderCurrentView();
+        } catch (err) {
+          showToast(`Erro ao atualizar valor: ${err.message}`, "error");
+          setButtonLoading(btn, false);
+        }
+      });
+    },
+  });
 }
 
 function mountSalesTable(container, sales = [], { title = "Últimas Vendas" } = {}) {
@@ -261,6 +347,14 @@ function mountSalesTable(container, sales = [], { title = "Últimas Vendas" } = 
   container.querySelector("#sales-provider-filter")?.addEventListener("change", (e) => { providerFilter = e.target.value; applyFilters(); });
 
   tbody.addEventListener("click", async (e) => {
+    const editBtn = e.target.closest("[data-edit-sale]");
+    if (editBtn) {
+      hideFloatingTooltip();
+      const sale = sales.find((item) => String(item.id) === String(editBtn.dataset.editSale));
+      if (sale) openEditSaleAmountModal(sale);
+      return;
+    }
+
     const delBtn = e.target.closest("[data-delete-sale]");
     if (delBtn) {
       hideFloatingTooltip();

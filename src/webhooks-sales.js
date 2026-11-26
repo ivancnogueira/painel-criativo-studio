@@ -324,6 +324,118 @@ export function createSalesWebhooksRouter(hub, options = {}) {
     return res.json({ ok: true, replayed: true, result, delivery: { ...updated, status_label: mapStatusLabel(updated) } });
   });
 
+  function handleUpdateDelivery(req, res) {
+    const idOrKey = String(req.params.id || "").trim();
+    const row = hub.db
+      .prepare(`SELECT * FROM sales_webhook_deliveries WHERE id = ? OR delivery_key = ? LIMIT 1;`)
+      .get(idOrKey, idOrKey);
+    if (!row) {
+      return res.status(404).json({ error: "not_found", message: "Registro de entrega não encontrado." });
+    }
+
+    const body = req.body || {};
+    const updates = [];
+    const params = [];
+
+    let nextAmountCents = null;
+    if (body.amount_cents !== undefined && body.amount_cents !== null && body.amount_cents !== "") {
+      nextAmountCents = parseMoneyToCents(body.amount_cents, { isIntegerCents: true });
+      updates.push("amount_cents = ?");
+      params.push(nextAmountCents);
+    } else if (body.amount !== undefined && body.amount !== null && body.amount !== "") {
+      nextAmountCents = parseMoneyToCents(body.amount);
+      updates.push("amount_cents = ?");
+      params.push(nextAmountCents);
+    }
+
+    let nextCurrency = null;
+    if (body.currency !== undefined && body.currency !== null && String(body.currency).trim()) {
+      nextCurrency = String(body.currency).trim().toUpperCase().slice(0, 8);
+      updates.push("currency = ?");
+      params.push(nextCurrency);
+    }
+
+    let nextMethod = undefined;
+    if (body.payment_method !== undefined) {
+      const rawMethod = String(body.payment_method || "").trim().toLowerCase();
+      nextMethod = !rawMethod ? null : rawMethod === "manual" ? "manual" : normalizePaymentMethod(rawMethod);
+      updates.push("payment_method = ?");
+      params.push(nextMethod);
+    }
+
+    const syncLicense = body.sync_license !== false;
+
+    hub.db.exec("BEGIN IMMEDIATE;");
+    try {
+      if (updates.length > 0) {
+        hub.db
+          .prepare(`UPDATE sales_webhook_deliveries SET ${updates.join(", ")} WHERE delivery_key = ?;`)
+          .run(...params, row.delivery_key);
+      }
+
+      if (syncLicense) {
+        if (row.transaction_id && row.provider && (nextAmountCents !== null || nextCurrency !== null)) {
+          const txUpdates = [];
+          const txParams = [];
+          if (nextAmountCents !== null) {
+            txUpdates.push("amount_cents = ?");
+            txParams.push(nextAmountCents);
+          }
+          if (nextCurrency !== null) {
+            txUpdates.push("currency = ?");
+            txParams.push(nextCurrency);
+          }
+          if (txUpdates.length > 0) {
+            hub.db
+              .prepare(`UPDATE license_transactions SET ${txUpdates.join(", ")} WHERE provider = ? AND transaction_id = ?;`)
+              .run(...txParams, String(row.provider), String(row.transaction_id));
+          }
+        }
+
+        if (row.license_key && row.action === "issued_or_updated") {
+          const licUpdates = [];
+          const licParams = [];
+          if (nextAmountCents !== null) {
+            licUpdates.push("amount_cents = ?");
+            licParams.push(nextAmountCents);
+          }
+          if (nextCurrency !== null) {
+            licUpdates.push("currency = ?");
+            licParams.push(nextCurrency);
+          }
+          if (nextMethod !== undefined) {
+            licUpdates.push("payment_method = ?");
+            licParams.push(nextMethod);
+          }
+          if (licUpdates.length > 0) {
+            licUpdates.push("updated_at = ?");
+            licParams.push(new Date().toISOString(), row.license_key);
+            hub.db
+              .prepare(`UPDATE licenses SET ${licUpdates.join(", ")} WHERE upper(license_key) = upper(?);`)
+              .run(...licParams);
+          }
+        }
+      }
+
+      hub.db.exec("COMMIT;");
+    } catch (err) {
+      try {
+        hub.db.exec("ROLLBACK;");
+      } catch {
+        // Ignora erro ao desfazer
+      }
+      throw err;
+    }
+
+    const updated = hub.db
+      .prepare(`SELECT * FROM sales_webhook_deliveries WHERE delivery_key = ? LIMIT 1;`)
+      .get(row.delivery_key);
+    return res.json({ ok: true, delivery: { ...updated, status_label: mapStatusLabel(updated) } });
+  }
+
+  router.patch("/admin/webhooks/deliveries/:id", hub.requireAdmin, handleUpdateDelivery);
+  router.post("/admin/webhooks/deliveries/:id/update", hub.requireAdmin, handleUpdateDelivery);
+
   function handleDeleteDelivery(req, res) {
     const idOrKey = String(req.params.id || "").trim();
     const row = hub.db
