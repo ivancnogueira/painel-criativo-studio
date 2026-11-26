@@ -45,9 +45,44 @@ export function showToast(msg, variant = "info") {
 }
 
 export async function copyText(text, label = "Copiado!") {
-  if (!text && text !== 0) return;
-  await navigator.clipboard.writeText(String(text));
-  showToast(label, "success");
+  if (!text && text !== 0) return false;
+  const str = String(text);
+  let copied = false;
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(str);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+
+  if (!copied) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = str;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-9999px";
+      ta.style.left = "-9999px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      copied = document.execCommand("copy");
+      ta.remove();
+    } catch {
+      copied = false;
+    }
+  }
+
+  if (copied) {
+    if (label) showToast(label, "success");
+    return true;
+  }
+  showToast("Não foi possível copiar para a área de transferência.", "error");
+  return false;
 }
 
 export function formatMoney(cents, currency = "BRL") {
@@ -169,12 +204,14 @@ function unbindEscapeClose() {
 }
 
 export function closeModal() {
+  hideFloatingTooltip();
   const root = $("modal-root");
   if (root) root.innerHTML = "";
   unbindEscapeClose();
 }
 
 export function openModal({ title = "", subtitle = "", bodyHtml = "", width = 560, onMount = null } = {}) {
+  hideFloatingTooltip();
   const root = $("modal-root");
   if (!root) return;
   root.innerHTML = `
@@ -200,12 +237,14 @@ export function openModal({ title = "", subtitle = "", bodyHtml = "", width = 56
 }
 
 export function closeDrawer() {
+  hideFloatingTooltip();
   const root = $("drawer-root");
   if (root) root.innerHTML = "";
   unbindEscapeClose();
 }
 
 export function openDrawer({ title = "", subtitle = "", bodyHtml = "", onMount = null } = {}) {
+  hideFloatingTooltip();
   const root = $("drawer-root");
   if (!root) return;
   root.innerHTML = `
@@ -228,4 +267,117 @@ export function openDrawer({ title = "", subtitle = "", bodyHtml = "", onMount =
   });
   bindEscapeClose(closeDrawer);
   if (typeof onMount === "function") onMount(root);
+}
+
+let floatingTooltipEl = null;
+let floatingTooltipTarget = null;
+let floatingTooltipGlobalsBound = false;
+
+function getFloatingTooltipEl() {
+  if (!floatingTooltipEl || !document.body.contains(floatingTooltipEl)) {
+    floatingTooltipEl = document.getElementById("floating-tooltip");
+    if (!floatingTooltipEl) {
+      floatingTooltipEl = document.createElement("div");
+      floatingTooltipEl.id = "floating-tooltip";
+      floatingTooltipEl.className = "floating-tooltip";
+      floatingTooltipEl.setAttribute("role", "tooltip");
+      floatingTooltipEl.setAttribute("aria-hidden", "true");
+      document.body.appendChild(floatingTooltipEl);
+    }
+  }
+  return floatingTooltipEl;
+}
+
+function positionFloatingTooltip(el) {
+  const tip = getFloatingTooltipEl();
+  if (!el || !document.body.contains(el)) return;
+  const text = String(el.getAttribute("data-tooltip") || "").trim();
+  if (!text) return;
+
+  tip.textContent = text;
+  tip.classList.add("is-visible");
+  tip.setAttribute("aria-hidden", "false");
+
+  const rect = el.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  const margin = 8;
+  const gap = 8;
+
+  let left = rect.left + rect.width / 2 - tipRect.width / 2;
+  left = Math.max(margin, Math.min(window.innerWidth - tipRect.width - margin, left));
+
+  let top = rect.top - tipRect.height - gap;
+  if (top < margin) {
+    top = rect.bottom + gap;
+  }
+
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+}
+
+export function hideFloatingTooltip() {
+  floatingTooltipTarget = null;
+  if (floatingTooltipEl) {
+    floatingTooltipEl.classList.remove("is-visible");
+    floatingTooltipEl.setAttribute("aria-hidden", "true");
+  }
+}
+
+export function refreshFloatingTooltip(el) {
+  if (!el || floatingTooltipTarget !== el) return;
+  const text = String(el.getAttribute("data-tooltip") || "").trim();
+  if (!text) {
+    hideFloatingTooltip();
+    return;
+  }
+  positionFloatingTooltip(el);
+}
+
+export function bindFloatingTooltips(container) {
+  if (!container) return;
+
+  if (!floatingTooltipGlobalsBound) {
+    floatingTooltipGlobalsBound = true;
+    window.addEventListener("scroll", hideFloatingTooltip, true);
+    window.addEventListener("resize", hideFloatingTooltip);
+    document.addEventListener("click", (e) => {
+      if (floatingTooltipTarget && !floatingTooltipTarget.contains(e.target)) {
+        hideFloatingTooltip();
+      }
+    });
+  }
+
+  if (container.dataset.floatingTooltipsBound === "1") return;
+  container.dataset.floatingTooltipsBound = "1";
+
+  const showFor = (target) => {
+    const el = target?.closest?.("[data-tooltip]");
+    if (!el || !container.contains(el)) return;
+    floatingTooltipTarget = el;
+    positionFloatingTooltip(el);
+  };
+
+  container.addEventListener("mouseover", (e) => {
+    showFor(e.target);
+  });
+
+  container.addEventListener("mouseout", (e) => {
+    if (!floatingTooltipTarget) return;
+    const leavingEl = e.target?.closest?.("[data-tooltip]");
+    if (leavingEl === floatingTooltipTarget && (!e.relatedTarget || !leavingEl.contains(e.relatedTarget))) {
+      hideFloatingTooltip();
+    }
+  });
+
+  container.addEventListener("focusin", (e) => {
+    showFor(e.target);
+  });
+
+  container.addEventListener("focusout", (e) => {
+    if (!floatingTooltipTarget) return;
+    const leavingEl = e.target?.closest?.("[data-tooltip]");
+    if (leavingEl === floatingTooltipTarget && (!e.relatedTarget || !leavingEl.contains(e.relatedTarget))) {
+      hideFloatingTooltip();
+    }
+  });
 }

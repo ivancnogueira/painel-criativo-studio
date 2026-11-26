@@ -1,5 +1,6 @@
 import {
   api,
+  bindFloatingTooltips,
   closeDrawer,
   closeModal,
   confirmDialog,
@@ -8,8 +9,10 @@ import {
   escapeHtml,
   formatDateTime,
   formatMoney,
+  hideFloatingTooltip,
   openDrawer,
   openModal,
+  refreshFloatingTooltip,
   setButtonLoading,
   showToast,
 } from "./core/api.js";
@@ -17,6 +20,12 @@ import { refreshDashboardData, store } from "./core/state.js";
 import { registerView } from "./core/router.js";
 
 ensureStylesheet("/styles/views.css");
+
+const ICON_COPY = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const ICON_CHECK = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+const ICON_EYE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_EDIT = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
+const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
 const PLAN_LABELS = {
   individual: "Individual",
@@ -228,6 +237,28 @@ function openQuickEditModal(lic, onSaved) {
   });
 }
 
+async function confirmAndDeleteLicense(lic, onDeleted) {
+  if (!lic?.license_key) return;
+  hideFloatingTooltip();
+  const who = lic.customer_name || lic.customer_email || lic.license_key;
+  const ok = await confirmDialog({
+    title: "Deletar cliente e licença?",
+    message: `Esta ação é irreversível. Vai deletar ${who} (${lic.license_key}), revogar imediatamente a licença e os dispositivos vinculados, e apagar todo o valor pago, histórico de webhooks e notificações.`,
+    confirmLabel: "Deletar Tudo",
+    danger: true,
+  });
+  if (!ok) return;
+
+  try {
+    await api(`/api/admin/licenses/${encodeURIComponent(lic.license_key)}`, { method: "DELETE" });
+    showToast("Cliente, licença e registros financeiros removidos!", "success");
+    await refreshDashboardData(["licenses", "analytics", "overview", "webhooks", "notificationLogs"]);
+    if (typeof onDeleted === "function") await onDeleted();
+  } catch (err) {
+    showToast(`Erro ao deletar licença: ${err.message}`, "error");
+  }
+}
+
 async function openLicenseDetailsDrawer(licenseKey, onChanged) {
   try {
     const res = await api(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/details`);
@@ -321,11 +352,14 @@ async function openLicenseDetailsDrawer(licenseKey, onChanged) {
 
           <div class="row-between">
             <span class="muted">Ação de segurança</span>
-            ${
-              lic.status === "revoked"
-                ? `<button type="button" class="btn btn-secondary btn-sm" id="dr-reactivate">Reativar Licença</button>`
-                : `<button type="button" class="btn btn-danger btn-sm" id="dr-revoke">Revogar Licença</button>`
-            }
+            <div class="btn-row">
+              ${
+                lic.status === "revoked"
+                  ? `<button type="button" class="btn btn-secondary btn-sm" id="dr-reactivate">Reativar Licença</button>`
+                  : `<button type="button" class="btn btn-danger btn-sm" id="dr-revoke">Revogar Licença</button>`
+              }
+              <button type="button" class="btn btn-danger btn-sm" id="dr-delete-all">Deletar Tudo</button>
+            </div>
           </div>
         </div>
       `,
@@ -415,6 +449,12 @@ async function openLicenseDetailsDrawer(licenseKey, onChanged) {
           } catch (err) {
             showToast(err.message, "error");
           }
+        });
+        root.querySelector("#dr-delete-all")?.addEventListener("click", () => {
+          void confirmAndDeleteLicense(lic, async () => {
+            closeDrawer();
+            if (typeof onChanged === "function") await onChanged();
+          });
         });
       },
     });
@@ -528,9 +568,11 @@ registerView("licenses", {
               </td>
               <td>${licenseStatusPill(lic.status)}</td>
               <td>
-                <div class="btn-row">
-                  <button type="button" class="btn btn-ghost btn-sm" data-copy-key="${keyEsc}" title="Copiar Chave">Copiar</button>
-                  <button type="button" class="btn btn-secondary btn-sm" data-open-details="${keyEsc}">Detalhes</button>
+                <div class="action-icon-group">
+                  <button type="button" class="action-icon-btn" data-copy-key="${keyEsc}" data-tooltip="Copiar chave" aria-label="Copiar chave">${ICON_COPY}</button>
+                  <button type="button" class="action-icon-btn" data-open-details="${keyEsc}" data-tooltip="Ver detalhes" aria-label="Ver detalhes">${ICON_EYE}</button>
+                  <button type="button" class="action-icon-btn" data-edit-license="${keyEsc}" data-tooltip="Editar licença" aria-label="Editar licença">${ICON_EDIT}</button>
+                  <button type="button" class="action-icon-btn action-icon-btn--danger" data-delete-license="${keyEsc}" data-tooltip="Deletar cliente e licença" aria-label="Deletar cliente e licença">${ICON_TRASH}</button>
                 </div>
               </td>
             </tr>`;
@@ -538,19 +580,51 @@ registerView("licenses", {
         .join("");
 
       tbody.querySelectorAll("[data-copy-key]").forEach((b) => {
-        b.addEventListener("click", (e) => {
+        b.addEventListener("click", async (e) => {
           e.stopPropagation();
-          void copyText(b.dataset.copyKey, "Chave de licença copiada!");
+          const ok = await copyText(b.dataset.copyKey, "Chave de licença copiada!");
+          if (!ok) return;
+          if (b._copyTimer) clearTimeout(b._copyTimer);
+          b.classList.add("is-copied");
+          b.innerHTML = ICON_CHECK;
+          b.dataset.tooltip = "Copiado!";
+          refreshFloatingTooltip(b);
+          b._copyTimer = setTimeout(() => {
+            b.classList.remove("is-copied");
+            b.innerHTML = ICON_COPY;
+            b.dataset.tooltip = "Copiar chave";
+            refreshFloatingTooltip(b);
+            b._copyTimer = null;
+          }, 1600);
         });
       });
       tbody.querySelectorAll("[data-open-details]").forEach((b) => {
         b.addEventListener("click", (e) => {
           e.stopPropagation();
+          hideFloatingTooltip();
           void openLicenseDetailsDrawer(b.dataset.openDetails, loadLicenses);
         });
       });
+      tbody.querySelectorAll("[data-edit-license]").forEach((b) => {
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          hideFloatingTooltip();
+          const lic = list.find((item) => item.license_key === b.dataset.editLicense);
+          if (lic) openQuickEditModal(lic, loadLicenses);
+        });
+      });
+      tbody.querySelectorAll("[data-delete-license]").forEach((b) => {
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const lic = list.find((item) => item.license_key === b.dataset.deleteLicense);
+          if (lic) void confirmAndDeleteLicense(lic, loadLicenses);
+        });
+      });
       tbody.querySelectorAll("[data-lic-row]").forEach((tr) => {
-        tr.addEventListener("click", () => void openLicenseDetailsDrawer(tr.dataset.licRow, loadLicenses));
+        tr.addEventListener("click", () => {
+          hideFloatingTooltip();
+          void openLicenseDetailsDrawer(tr.dataset.licRow, loadLicenses);
+        });
       });
     }
 
@@ -567,6 +641,8 @@ registerView("licenses", {
 
     if (filterQ) void loadLicenses();
     else renderLicenses(licenses);
+
+    bindFloatingTooltips(root);
 
     root.querySelector("#btn-open-create-license")?.addEventListener("click", () => openCreateLicenseModal(loadLicenses));
     let searchTimer = null;

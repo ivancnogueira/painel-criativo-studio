@@ -609,6 +609,90 @@ export function createLicenseHub(options = {}) {
     return { ...updated, _revocationScope: "license" };
   }
 
+  function deleteLicenseCompletely(licenseKey) {
+    const row = findLicenseByKey(licenseKey);
+    if (!row) return null;
+
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      const txRows = db
+        .prepare(`SELECT transaction_id FROM license_transactions WHERE license_id = ?;`)
+        .all(row.id);
+      const txIds = Array.from(
+        new Set(txRows.map((item) => String(item.transaction_id || "").trim()).filter(Boolean)),
+      );
+
+      const otherLicensesCount =
+        db
+          .prepare(`SELECT COUNT(*) AS total FROM licenses WHERE lower(customer_email) = lower(?) AND id != ?;`)
+          .get(row.customer_email || "", row.id)?.total || 0;
+
+      const machines = db.prepare(`DELETE FROM license_machines WHERE license_id = ?;`).run(row.id).changes || 0;
+      const events = db.prepare(`DELETE FROM license_events WHERE license_id = ?;`).run(row.id).changes || 0;
+      const transactions = db.prepare(`DELETE FROM license_transactions WHERE license_id = ?;`).run(row.id).changes || 0;
+
+      let webhookDeliveries = 0;
+      webhookDeliveries +=
+        db
+          .prepare(`DELETE FROM sales_webhook_deliveries WHERE upper(COALESCE(license_key, '')) = upper(?);`)
+          .run(row.license_key).changes || 0;
+
+      const deleteByTxStmt = db.prepare(`DELETE FROM sales_webhook_deliveries WHERE transaction_id = ?;`);
+      for (const txId of txIds) {
+        webhookDeliveries += deleteByTxStmt.run(txId).changes || 0;
+      }
+
+      if (otherLicensesCount === 0 && row.customer_email) {
+        webhookDeliveries +=
+          db
+            .prepare(`DELETE FROM sales_webhook_deliveries WHERE lower(COALESCE(buyer_email, '')) = lower(?);`)
+            .run(row.customer_email).changes || 0;
+      }
+
+      const notificationLogs =
+        db
+          .prepare(`DELETE FROM notification_logs WHERE license_id = ? OR upper(COALESCE(license_key, '')) = upper(?);`)
+          .run(row.id, row.license_key).changes || 0;
+      const notificationQueue =
+        db
+          .prepare(`DELETE FROM notification_queue WHERE license_id = ? OR upper(COALESCE(license_key, '')) = upper(?);`)
+          .run(row.id, row.license_key).changes || 0;
+
+      let serverClaims = 0;
+      try {
+        serverClaims =
+          db.prepare(`DELETE FROM server_claims WHERE upper(license_key) = upper(?);`).run(row.license_key).changes || 0;
+      } catch {
+        // Tabela server_claims pode ainda não existir antes do router de claims ser montado
+      }
+
+      db.prepare(`DELETE FROM licenses WHERE id = ?;`).run(row.id);
+      db.exec("COMMIT;");
+
+      return {
+        license_key: row.license_key,
+        customer_email: row.customer_email,
+        customer_name: row.customer_name || "",
+        removed: {
+          machines,
+          events,
+          transactions,
+          webhookDeliveries,
+          notificationLogs,
+          notificationQueue,
+          serverClaims,
+        },
+      };
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // Ignora erro ao desfazer
+      }
+      throw err;
+    }
+  }
+
   function enqueueNotificationRetry({ license, channel, recipient, eventType, errorDetail }) {
     const now = Date.now();
     const nextRetry = new Date(now + RETRY_BACKOFF_MINUTES[0] * 60 * 1000).toISOString();
@@ -874,6 +958,7 @@ export function createLicenseHub(options = {}) {
       db, keys, emailDispatcher, whatsappDispatcher, analyticsService, PLAN_MATRIX, getPlanCatalog, savePlanCatalog,
       processNotificationQueue, parseUpgradesJson, normalizeUpgrades,
       listActiveDevices, findLicenseByKey, logEvent, issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey,
+      deleteLicenseCompletely,
       dispatchLicenseNotifications, buildLicenseEmailPayload, parseMoneyToCents, normalizePaymentMethod, requireAdmin: auth.requireAdmin,
     }),
   );
@@ -883,7 +968,7 @@ export function createLicenseHub(options = {}) {
     router, db, vault, auth, keys, emailDispatcher, whatsappDispatcher, analyticsService,
     logNotification, dispatchLicenseNotifications, processNotificationQueue, getPlanCatalog, savePlanCatalog,
     findLicenseByKey, listActiveDevices, signCertificate,
-    issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey, requireAdmin: auth.requireAdmin,
+    issueOrUpdateLicenseFromSale, revokeLicenseByEmailOrKey, deleteLicenseCompletely, requireAdmin: auth.requireAdmin,
     close: () => {
       if (retryTimer) clearInterval(retryTimer);
       db.close();

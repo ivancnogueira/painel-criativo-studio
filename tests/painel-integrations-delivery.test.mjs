@@ -554,4 +554,159 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
     assert.equal(deliveryJson.delivery.support_group_url, supportUrl);
     assert.equal(deliveryJson.delivery.support_group_label, supportLabel);
   });
+
+  it("DELETE /api/admin/licenses/:key remove cliente, revoga acesso, zera faturamento e preserva outras licenças", async () => {
+    const { baseUrl, cookie } = await startServer();
+
+    // Cria integração Greenn ativa com venda real de R$ 197,00
+    const createdIntRes = await fetch(`${baseUrl}/api/admin/integrations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        platform: "greenn",
+        name: "Greenn Delecao",
+        deliveryMode: "direct",
+        fixedPlanTier: "individual",
+        headerSecret: "grn_del_secret_123",
+        isActive: true,
+        fieldMapping: {
+          email: "client.email",
+          name: "client.name",
+          statusField: "current_status",
+          externalId: "sale.id",
+          amountField: "sale.amount",
+          paymentMethodField: "sale.method",
+        },
+      }),
+    });
+    assert.equal(createdIntRes.status, 201);
+    const { integration } = await createdIntRes.json();
+
+    const webhookPath = new URL(integration.webhookUrl).pathname;
+    const saleRes = await fetch(`${baseUrl}${webhookPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-greenn-token": "grn_del_secret_123" },
+      body: JSON.stringify({
+        current_status: "paid",
+        sale: { id: "GRN-DEL-1", amount: 197.0, method: "PIX" },
+        client: { name: "Cliente Deletavel", email: "deletar.cliente@exemplo.invalid" },
+      }),
+    });
+    assert.equal(saleRes.status, 200);
+    const saleJson = await saleRes.json();
+    const targetKey = saleJson.license_key;
+    assert.match(targetKey, /^CRIA-IND-/);
+
+    // Ativa uma máquina e consulta token de entrega
+    const activateRes = await fetch(`${baseUrl}/api/licenses/activate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        license_key: targetKey,
+        email: "deletar.cliente@exemplo.invalid",
+        machine_id: "pc-del-01",
+        hostname: "PC-TESTE",
+        os_platform: "win32",
+      }),
+    });
+    assert.equal(activateRes.status, 200);
+
+    const detailsBefore = await (
+      await fetch(`${baseUrl}/api/admin/licenses/${targetKey}/details`, { headers: { Cookie: cookie } })
+    ).json();
+    const deliveryToken = detailsBefore.license.delivery_token;
+    assert.ok(deliveryToken);
+
+    const salesBefore = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesBefore.kpis.grossRevenueCents, 19700);
+    assert.equal(salesBefore.kpis.approvedCount, 1);
+    assert.equal(salesBefore.kpis.totalLicenses, 1);
+
+    // Deleta completamente a licença
+    const delRes = await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(targetKey)}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    assert.equal(delRes.status, 200);
+    const delJson = await delRes.json();
+    assert.equal(delJson.ok, true);
+    assert.equal(delJson.deleted.license_key, targetKey);
+    assert.ok(delJson.deleted.removed.machines >= 1);
+    assert.ok(delJson.deleted.removed.transactions >= 1);
+    assert.ok(delJson.deleted.removed.webhookDeliveries >= 1);
+    assert.ok(delJson.deleted.removed.notificationLogs >= 1);
+
+    // Tudo ligado à licença deve retornar 404 e faturamento deve zerar
+    const detailsAfter = await fetch(`${baseUrl}/api/admin/licenses/${targetKey}/details`, { headers: { Cookie: cookie } });
+    assert.equal(detailsAfter.status, 404);
+
+    const hbAfter = await fetch(`${baseUrl}/api/licenses/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ license_key: targetKey, machine_id: "pc-del-01" }),
+    });
+    assert.equal(hbAfter.status, 404);
+
+    const deliveryAfter = await fetch(`${baseUrl}/api/delivery/${deliveryToken}`);
+    assert.equal(deliveryAfter.status, 404);
+
+    const salesAfter = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesAfter.kpis.grossRevenueCents, 0);
+    assert.equal(salesAfter.kpis.netRevenueCents, 0);
+    assert.equal(salesAfter.kpis.approvedCount, 0);
+    assert.equal(salesAfter.kpis.totalLicenses, 0);
+
+    // Segunda deleção deve retornar 404
+    const delAgain = await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(targetKey)}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    assert.equal(delAgain.status, 404);
+
+    // Cria 2 licenças manuais com valor pago para o mesmo e-mail; deletar 1 deve preservar a 2ª e seu valor
+    const lic1Res = await fetch(`${baseUrl}/api/admin/licenses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        email: "duas.licencas@exemplo.invalid",
+        customer_name: "Duas Licenças",
+        plan_tier: "individual",
+        amount_cents: 10000,
+        force_new: true,
+      }),
+    });
+    const lic2Res = await fetch(`${baseUrl}/api/admin/licenses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        email: "duas.licencas@exemplo.invalid",
+        customer_name: "Duas Licenças",
+        plan_tier: "agencia_10",
+        amount_cents: 25000,
+        force_new: true,
+      }),
+    });
+    const lic1 = (await lic1Res.json()).license;
+    const lic2 = (await lic2Res.json()).license;
+
+    const del1Res = await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(lic1.license_key)}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    assert.equal(del1Res.status, 200);
+
+    const detailsLic2 = await fetch(`${baseUrl}/api/admin/licenses/${lic2.license_key}/details`, { headers: { Cookie: cookie } });
+    assert.equal(detailsLic2.status, 200);
+
+    const salesFinal = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesFinal.kpis.grossRevenueCents, 25000);
+    assert.equal(salesFinal.kpis.approvedCount, 1);
+    assert.equal(salesFinal.kpis.totalLicenses, 1);
+  });
 });

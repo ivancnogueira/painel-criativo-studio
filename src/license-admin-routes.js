@@ -17,6 +17,7 @@ export function createLicenseAdminRouter({
   logEvent,
   issueOrUpdateLicenseFromSale,
   revokeLicenseByEmailOrKey,
+  deleteLicenseCompletely,
   dispatchLicenseNotifications,
   buildLicenseEmailPayload,
   parseMoneyToCents,
@@ -300,6 +301,14 @@ export function createLicenseAdminRouter({
     });
     if (!revoked) return res.status(404).json({ error: "not_found" });
     return res.json({ ok: true, status: revoked.status });
+  });
+
+  router.delete("/admin/licenses/:key", requireAdmin, (req, res) => {
+    const deleted = deleteLicenseCompletely(req.params.key);
+    if (!deleted) {
+      return res.status(404).json({ error: "not_found", message: "Licença não encontrada." });
+    }
+    return res.json({ ok: true, deleted });
   });
 
   router.post("/admin/licenses/:key/reactivate", requireAdmin, (req, res) => {

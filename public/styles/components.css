@@ -41,6 +41,81 @@
 .btn-danger { background: var(--accent-danger-soft); border-color: rgba(255, 90, 101, 0.35); color: var(--accent-danger); }
 .btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
+/* ─── Botões Icon-Only de Ação & Tooltip Flutuante ─────────────────────────── */
+.action-icon-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.action-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s var(--ease-out, ease);
+}
+.action-icon-btn:active:not(:disabled) { transform: scale(0.94); }
+.action-icon-btn:focus-visible { outline: 2px solid var(--accent-orange); outline-offset: 2px; }
+@media (hover: hover) {
+  .action-icon-btn:hover:not(:disabled) {
+    background: var(--bg-surface-3);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+  .action-icon-btn--danger:hover:not(:disabled) {
+    background: var(--accent-danger-soft);
+    border-color: rgba(255, 90, 101, 0.45);
+    color: var(--accent-danger);
+  }
+}
+.action-icon-btn--danger:focus-visible {
+  background: var(--accent-danger-soft);
+  border-color: rgba(255, 90, 101, 0.45);
+  color: var(--accent-danger);
+}
+@keyframes iconPopIn {
+  from { opacity: 0; transform: scale(0.55); }
+  to { opacity: 1; transform: scale(1); }
+}
+.action-icon-btn.is-copied {
+  background: var(--accent-success-soft) !important;
+  border-color: rgba(49, 207, 118, 0.5) !important;
+  color: var(--accent-success) !important;
+}
+.action-icon-btn.is-copied svg {
+  animation: iconPopIn 0.18s var(--ease-out, ease) both;
+}
+.floating-tooltip {
+  position: fixed;
+  z-index: 95;
+  pointer-events: none;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: var(--chart-tooltip-bg);
+  color: var(--chart-tooltip-text);
+  border: 1px solid var(--border-strong);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.13s var(--ease-out, ease), transform 0.13s var(--ease-out, ease);
+}
+.floating-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* ─── Formulários Dual-Theme ──────────────────────────────────────────────── */
 .form-stack { display: flex; flex-direction: column; gap: 14px; }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
