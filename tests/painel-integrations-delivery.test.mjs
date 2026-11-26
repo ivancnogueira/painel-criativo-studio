@@ -709,4 +709,130 @@ describe("Novo Motor de Webhooks (14 Plataformas), Entregas & Proteções de Lic
     assert.equal(salesFinal.kpis.approvedCount, 1);
     assert.equal(salesFinal.kpis.totalLicenses, 1);
   });
+
+  it("Deduplicação de eventos de aprovação (Appmax OrderPaid + OrderApproved) e exclusão de log financeiro preservando licença", async () => {
+    const { baseUrl, cookie, sentEmails } = await startServer();
+
+    const createdIntRes = await fetch(`${baseUrl}/api/admin/integrations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        platform: "appmax",
+        name: "Appmax Dedup",
+        deliveryMode: "direct",
+        fixedPlanTier: "agencia_ilimitada",
+        isActive: true,
+        fieldMapping: {
+          email: "data.customer.email",
+          firstName: "data.customer.firstname",
+          lastName: "data.customer.lastname",
+          statusField: "event",
+          externalId: "data.id",
+          amountField: "data.total",
+          paymentMethodField: "data.payment_type",
+        },
+      }),
+    });
+    assert.equal(createdIntRes.status, 201);
+    const { integration } = await createdIntRes.json();
+    const webhookUrl = new URL(integration.webhookUrl);
+    const hookEndpoint = `${baseUrl}${webhookUrl.pathname}${webhookUrl.search}`;
+
+    // 1. Primeiro evento: OrderPaid
+    const paidRes = await fetch(hookEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "OrderPaid",
+        data: {
+          id: "134304273",
+          total: 125.98,
+          payment_type: "CreditCard",
+          customer: { firstname: "Jose", lastname: "Barreto", email: "jose.appmax@exemplo.invalid" },
+        },
+      }),
+    });
+    assert.equal(paidRes.status, 200);
+    const paidJson = await paidRes.json();
+    assert.equal(paidJson.action, "issued_or_updated");
+    assert.match(paidJson.license_key, /^CRIA-AGIL-/);
+    assert.equal(sentEmails.length, 1);
+
+    // 2. Segundo evento da mesma compra: OrderApproved (mesmo transactionId) -> deve deduplicar
+    const approvedRes = await fetch(hookEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "OrderApproved",
+        data: {
+          id: "134304273",
+          total: 125.98,
+          payment_type: "CreditCard",
+          customer: { firstname: "Jose", lastname: "Barreto", email: "jose.appmax@exemplo.invalid" },
+        },
+      }),
+    });
+    assert.equal(approvedRes.status, 200);
+    const approvedJson = await approvedRes.json();
+    assert.equal(approvedJson.idempotent, true);
+    assert.equal(approvedJson.deduplicated, true);
+    assert.equal(approvedJson.license_key, paidJson.license_key);
+    assert.equal(sentEmails.length, 1);
+
+    const salesAfterDedup = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesAfterDedup.kpis.grossRevenueCents, 12598);
+    assert.equal(salesAfterDedup.kpis.approvedCount, 1);
+
+    // 3. Envia segunda venda distinta (134304999) e testa exclusão apenas do registro financeiro preservando a licença
+    const paid2Res = await fetch(hookEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "OrderPaid",
+        data: {
+          id: "134304999",
+          total: 125.98,
+          payment_type: "CreditCard",
+          customer: { firstname: "Jose", lastname: "Barreto", email: "jose.appmax@exemplo.invalid" },
+        },
+      }),
+    });
+    assert.equal(paid2Res.status, 200);
+    const paid2Json = await paid2Res.json();
+
+    const salesBeforeDel = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesBeforeDel.kpis.grossRevenueCents, 25196);
+    assert.equal(salesBeforeDel.kpis.approvedCount, 2);
+
+    const delLogRes = await fetch(`${baseUrl}/api/admin/webhooks/deliveries/${encodeURIComponent(paid2Json.id)}/delete`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    assert.equal(delLogRes.status, 200);
+    const delLogJson = await delLogRes.json();
+    assert.equal(delLogJson.ok, true);
+
+    const getDeletedLog = await fetch(`${baseUrl}/api/admin/webhooks/deliveries/${encodeURIComponent(paid2Json.id)}`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(getDeletedLog.status, 404);
+
+    const salesAfterDel = await (
+      await fetch(`${baseUrl}/api/admin/analytics/sales?range=all`, { headers: { Cookie: cookie } })
+    ).json();
+    assert.equal(salesAfterDel.kpis.grossRevenueCents, 12598);
+    assert.equal(salesAfterDel.kpis.approvedCount, 1);
+
+    // A licença do cliente permanece ativa após remover o registro financeiro
+    const licDetails = await (
+      await fetch(`${baseUrl}/api/admin/licenses/${encodeURIComponent(paidJson.license_key)}/details`, {
+        headers: { Cookie: cookie },
+      })
+    ).json();
+    assert.equal(licDetails.license.status, "active");
+  });
 });

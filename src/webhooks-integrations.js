@@ -1095,6 +1095,31 @@ export function createIntegrationsWebhooksRouter(hub) {
       return res.json({ ok: true, idempotent: true, id: existing.id, action: existing.action, license_key: existing.license_key });
     }
 
+    if (extracted.eventAction === "approve" && extracted.transactionId) {
+      const existingByTx = hub.db
+        .prepare(
+          `SELECT id, action, license_key, event_name
+           FROM sales_webhook_deliveries
+           WHERE integration_id = ?
+             AND transaction_id = ?
+             AND action = 'issued_or_updated'
+             AND lower(COALESCE(product_id, '')) = lower(?)
+           LIMIT 1;`,
+        )
+        .get(integration.id, txId, extracted.productId || "");
+      if (existingByTx) {
+        return res.json({
+          ok: true,
+          idempotent: true,
+          deduplicated: true,
+          id: existingByTx.id,
+          action: existingByTx.action,
+          license_key: existingByTx.license_key,
+          message: "Pedido já aprovado anteriormente; evento duplicado ignorado.",
+        });
+      }
+    }
+
     try {
       const rules = loadRules(integration.id);
       const result = await processExtractedEvent({ integration, rules, extracted, rawPayload: body, txId });

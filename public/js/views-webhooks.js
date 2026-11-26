@@ -1,5 +1,6 @@
 import {
   api,
+  bindFloatingTooltips,
   closeDrawer,
   confirmDialog,
   copyText,
@@ -7,6 +8,7 @@ import {
   escapeHtml,
   formatDateTime,
   formatMoney,
+  hideFloatingTooltip,
   openDrawer,
   setButtonLoading,
   showToast,
@@ -15,6 +17,9 @@ import { refreshDashboardData, store } from "./core/state.js";
 import { registerView } from "./core/router.js";
 
 ensureStylesheet("/styles/views.css");
+
+const ICON_EYE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
 const PLAN_LABELS = {
   individual: "Individual",
@@ -100,6 +105,27 @@ function fieldSelectHtml(id, value, fields, placeholder) {
   `;
 }
 
+async function confirmAndDeleteDelivery(d, onDeleted) {
+  const targetId = d?.id || d?.delivery_key;
+  if (!targetId) return;
+  hideFloatingTooltip();
+  const ok = await confirmDialog({
+    title: "Excluir log de entrega?",
+    message: `Apaga o evento ${d.event_name || "-"} (${String(d.provider || "webhook").toUpperCase()}) do histórico e remove seu valor do faturamento se for uma venda aprovada, sem revogar nem excluir a licença do cliente.`,
+    confirmLabel: "Excluir Log",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/admin/webhooks/deliveries/${encodeURIComponent(targetId)}/delete`, { method: "POST" });
+    showToast("Log de entrega excluído!", "success");
+    await refreshDashboardData(["deliveries", "analytics", "integrations", "overview"]);
+    if (typeof onDeleted === "function") await onDeleted();
+  } catch (err) {
+    showToast(`Erro ao excluir log: ${err.message}`, "error");
+  }
+}
+
 async function openDeliveryInspector(deliveryId, onAfterAction) {
   try {
     const res = await api(`/api/admin/webhooks/deliveries/${encodeURIComponent(deliveryId)}`);
@@ -168,11 +194,18 @@ async function openDeliveryInspector(deliveryId, onAfterAction) {
                 ? ""
                 : `<button type="button" class="btn btn-primary btn-sm" id="btn-replay-delivery">Reprocessar (Replay)</button>`
             }
+            <button type="button" class="btn btn-danger btn-sm" id="btn-delete-delivery">Excluir Log</button>
           </div>
         </div>
         <pre class="json-viewer">${escapeHtml(prettyJson)}</pre>`,
       onMount: (root) => {
         root.querySelector("#btn-copy-raw-json")?.addEventListener("click", () => void copyText(prettyJson, "Payload JSON copiado!"));
+        root.querySelector("#btn-delete-delivery")?.addEventListener("click", () => {
+          void confirmAndDeleteDelivery(d, async () => {
+            closeDrawer();
+            if (typeof onAfterAction === "function") await onAfterAction();
+          });
+        });
         root.querySelector("#btn-replay-delivery")?.addEventListener("click", async (e) => {
           const btn = e.currentTarget;
           setButtonLoading(btn, true, "Reprocessando...");
@@ -1232,23 +1265,48 @@ registerView("webhooks", {
           return;
         }
         tbody.innerHTML = rows
-          .map(
-            (d) => `
-            <tr class="delivery-row-clickable" data-delivery-id="${escapeHtml(d.id || d.delivery_key)}">
+          .map((d) => {
+            const idEsc = escapeHtml(d.id || d.delivery_key);
+            return `
+            <tr class="delivery-row-clickable" data-delivery-id="${idEsc}">
               <td><strong>${escapeHtml(String(d.provider || "").toUpperCase())}</strong></td>
               <td><div>${escapeHtml(d.event_name || "-")}</div><div class="muted tabular-nums">${escapeHtml(d.transaction_id || "-")}</div></td>
               <td><div>${escapeHtml(d.buyer_name || "-")}</div><div class="muted">${escapeHtml(d.buyer_email || "-")}</div></td>
               <td class="tabular-nums"><div>${escapeHtml(PLAN_LABELS[d.plan_tier] || d.plan_tier || "-")}</div><div class="muted">${escapeHtml(formatMoney(d.amount_cents || 0, d.currency || "BRL"))}</div></td>
               <td>${statusBadgeHtml(d)} <span class="muted">HTTP ${escapeHtml(d.http_status ?? 200)}</span></td>
               <td class="muted tabular-nums">${escapeHtml(formatDateTime(d.processed_at))}</td>
-              <td><button type="button" class="btn btn-secondary btn-sm">Inspecionar</button></td>
-            </tr>`,
-          )
+              <td>
+                <div class="action-icon-group">
+                  <button type="button" class="action-icon-btn" data-inspect-delivery="${idEsc}" data-tooltip="Inspecionar payload" aria-label="Inspecionar payload">${ICON_EYE}</button>
+                  <button type="button" class="action-icon-btn action-icon-btn--danger" data-delete-delivery="${idEsc}" data-tooltip="Excluir log e registro financeiro" aria-label="Excluir log e registro financeiro">${ICON_TRASH}</button>
+                </div>
+              </td>
+            </tr>`;
+          })
           .join("");
+        tbody.querySelectorAll("[data-inspect-delivery]").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            hideFloatingTooltip();
+            void openDeliveryInspector(btn.dataset.inspectDelivery, loadDeliveries);
+          });
+        });
+        tbody.querySelectorAll("[data-delete-delivery]").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const item = rows.find((r) => String(r.id || r.delivery_key) === String(btn.dataset.deleteDelivery));
+            if (item) void confirmAndDeleteDelivery(item, loadDeliveries);
+          });
+        });
         tbody.querySelectorAll("[data-delivery-id]").forEach((tr) => {
-          tr.addEventListener("click", () => void openDeliveryInspector(tr.dataset.deliveryId, loadDeliveries));
+          tr.addEventListener("click", () => {
+            hideFloatingTooltip();
+            void openDeliveryInspector(tr.dataset.deliveryId, loadDeliveries);
+          });
         });
       };
+
+      bindFloatingTooltips(root);
 
       const loadDeliveries = async () => {
         const qs = new URLSearchParams({ limit: "60" });

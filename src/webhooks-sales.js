@@ -324,6 +324,63 @@ export function createSalesWebhooksRouter(hub, options = {}) {
     return res.json({ ok: true, replayed: true, result, delivery: { ...updated, status_label: mapStatusLabel(updated) } });
   });
 
+  function handleDeleteDelivery(req, res) {
+    const idOrKey = String(req.params.id || "").trim();
+    const row = hub.db
+      .prepare(`SELECT * FROM sales_webhook_deliveries WHERE id = ? OR delivery_key = ? LIMIT 1;`)
+      .get(idOrKey, idOrKey);
+    if (!row) {
+      return res.status(404).json({ error: "not_found", message: "Registro de entrega não encontrado." });
+    }
+
+    hub.db.exec("BEGIN IMMEDIATE;");
+    try {
+      hub.db.prepare(`DELETE FROM sales_webhook_deliveries WHERE delivery_key = ?;`).run(row.delivery_key);
+
+      if (row.transaction_id && row.provider) {
+        const txCount =
+          hub.db
+            .prepare(`SELECT COUNT(*) AS total FROM license_transactions WHERE provider = ? AND transaction_id = ?;`)
+            .get(String(row.provider), String(row.transaction_id))?.total || 0;
+        if (Number(txCount) > 1) {
+          hub.db
+            .prepare(
+              `DELETE FROM license_transactions
+               WHERE id = (
+                 SELECT id FROM license_transactions
+                 WHERE provider = ? AND transaction_id = ?
+                 ORDER BY created_at DESC LIMIT 1
+               );`,
+            )
+            .run(String(row.provider), String(row.transaction_id));
+        }
+      }
+
+      hub.db.exec("COMMIT;");
+      return res.json({
+        ok: true,
+        deleted: {
+          id: row.id,
+          delivery_key: row.delivery_key,
+          provider: row.provider,
+          transaction_id: row.transaction_id,
+          event_name: row.event_name,
+          amount_cents: row.amount_cents || 0,
+        },
+      });
+    } catch (err) {
+      try {
+        hub.db.exec("ROLLBACK;");
+      } catch {
+        // Ignora erro ao desfazer
+      }
+      throw err;
+    }
+  }
+
+  router.delete("/admin/webhooks/deliveries/:id", hub.requireAdmin, handleDeleteDelivery);
+  router.post("/admin/webhooks/deliveries/:id/delete", hub.requireAdmin, handleDeleteDelivery);
+
   router.post("/webhooks/sales", async (req, res) => {
     const secrets = getWebhookSettings();
     const provider = detectProvider(req);

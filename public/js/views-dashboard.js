@@ -1,16 +1,23 @@
 import {
   api,
+  bindFloatingTooltips,
   closeModal,
+  confirmDialog,
   ensureStylesheet,
   escapeHtml,
   formatDateTime,
   formatMoney,
+  hideFloatingTooltip,
   openModal,
   showToast,
 } from "./core/api.js";
 import { refreshDashboardData } from "./core/state.js";
 import { navigate, registerView, renderCurrentView } from "./core/router.js";
 import { renderCashFlowChart, renderGoalGaugeSvg, renderPlanDonutChart, renderTrendSparklineSvg } from "./charts.js";
+
+const ICON_EYE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_KEY = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
+const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
 const RANGE_OPTIONS = [
   { id: "7d", label: "7d" },
@@ -184,9 +191,10 @@ function renderSalesRowsHtml(sales) {
           <td class="tabular-nums"><strong>${escapeHtml(formatMoney(s.amountCents, s.currency || "BRL"))}</strong></td>
           <td>${statusBadge}</td>
           <td>
-            <div class="btn-row">
-              <button type="button" class="btn btn-ghost btn-sm" data-inspect-sale="${escapeHtml(s.id)}" data-sale-source="${escapeHtml(s.source)}">Inspecionar</button>
-              ${s.licenseKey ? `<button type="button" class="btn btn-secondary btn-sm" data-view-license="${escapeHtml(s.licenseKey)}">Ver licença</button>` : ""}
+            <div class="action-icon-group">
+              <button type="button" class="action-icon-btn" data-inspect-sale="${escapeHtml(s.id)}" data-sale-source="${escapeHtml(s.source)}" data-tooltip="Inspecionar venda" aria-label="Inspecionar venda">${ICON_EYE}</button>
+              ${s.licenseKey ? `<button type="button" class="action-icon-btn" data-view-license="${escapeHtml(s.licenseKey)}" data-tooltip="Ver licença" aria-label="Ver licença">${ICON_KEY}</button>` : ""}
+              <button type="button" class="action-icon-btn action-icon-btn--danger" data-delete-sale="${escapeHtml(s.id)}" data-sale-source="${escapeHtml(s.source)}" data-tooltip="${s.source === "manual" ? "Zerar valor financeiro" : "Excluir registro financeiro"}" aria-label="${s.source === "manual" ? "Zerar valor financeiro" : "Excluir registro financeiro"}">${ICON_TRASH}</button>
             </div>
           </td>
         </tr>
@@ -247,15 +255,66 @@ function mountSalesTable(container, sales = [], { title = "Últimas Vendas" } = 
   };
 
   applyFilters();
+  bindFloatingTooltips(container);
   container.querySelector("#sales-search-input")?.addEventListener("input", (e) => { query = e.target.value || ""; applyFilters(); });
   container.querySelector("#sales-status-filter")?.addEventListener("change", (e) => { statusFilter = e.target.value; applyFilters(); });
   container.querySelector("#sales-provider-filter")?.addEventListener("change", (e) => { providerFilter = e.target.value; applyFilters(); });
 
-  tbody.addEventListener("click", (e) => {
+  tbody.addEventListener("click", async (e) => {
+    const delBtn = e.target.closest("[data-delete-sale]");
+    if (delBtn) {
+      hideFloatingTooltip();
+      const saleId = delBtn.dataset.deleteSale;
+      const sale = sales.find((item) => String(item.id) === String(saleId));
+      if (!sale) return;
+
+      if (sale.source !== "manual") {
+        const ok = await confirmDialog({
+          title: "Excluir registro financeiro?",
+          message: `Remove este registro de ${String(sale.source || "").toUpperCase()} (${formatMoney(sale.amountCents, sale.currency || "BRL")}) do faturamento e dos logs, sem revogar nem excluir a licença do cliente.`,
+          confirmLabel: "Excluir Registro",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await api(`/api/admin/webhooks/deliveries/${encodeURIComponent(sale.id)}/delete`, { method: "POST" });
+          showToast("Registro financeiro excluído!", "success");
+          await refreshDashboardData(["analytics", "deliveries", "licenses", "overview"]);
+          void renderCurrentView();
+        } catch (err) {
+          showToast(`Erro ao excluir registro: ${err.message}`, "error");
+        }
+      } else if (sale.licenseKey) {
+        const ok = await confirmDialog({
+          title: "Zerar valor financeiro?",
+          message: `Zera o valor pago (${formatMoney(sale.amountCents, sale.currency || "BRL")}) da emissão manual ${sale.licenseKey}, sem apagar nem revogar a licença.`,
+          confirmLabel: "Zerar Valor",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await api(`/api/admin/licenses/${encodeURIComponent(sale.licenseKey)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ amount_cents: 0 }),
+          });
+          showToast("Valor financeiro zerado!", "success");
+          await refreshDashboardData(["analytics", "deliveries", "licenses", "overview"]);
+          void renderCurrentView();
+        } catch (err) {
+          showToast(`Erro ao zerar valor: ${err.message}`, "error");
+        }
+      }
+      return;
+    }
+
     const licBtn = e.target.closest("[data-view-license]");
-    if (licBtn) return navigate("licenses", { query: licBtn.dataset.viewLicense });
+    if (licBtn) {
+      hideFloatingTooltip();
+      return navigate("licenses", { query: licBtn.dataset.viewLicense });
+    }
     const inspBtn = e.target.closest("[data-inspect-sale]");
     if (!inspBtn) return;
+    hideFloatingTooltip();
     const saleId = inspBtn.dataset.inspectSale;
     if (inspBtn.dataset.saleSource !== "manual") {
       return navigate("webhooks", { deliveryId: saleId, inspectDeliveryId: saleId });
