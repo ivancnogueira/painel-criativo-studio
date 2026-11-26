@@ -89,6 +89,39 @@ if [ ! -f ".env" ]; then
 fi
 
 # 5. Reinício automático caso gerenciador conhecido seja detectado
+LISTEN_PORT="3009"
+if [ -f ".env" ]; then
+  ENV_PORT="$(grep -E '^PORT=' .env | head -n1 | cut -d= -f2- | tr -d '"\r ' || true)"
+  [ -n "$ENV_PORT" ] && LISTEN_PORT="$ENV_PORT"
+fi
+
+stop_orphan_port_process() {
+  local port="$1"
+  local pids=""
+  if command -v ss >/dev/null 2>&1; then
+    pids="$(ss -tlnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p"$" {print}' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)"
+  elif command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  fi
+  for pid in $pids; do
+    [ -n "$pid" ] || continue
+    local cmdline=""
+    cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+    if echo "$cmdline" | grep -qi "node"; then
+      echo "🧹 Encerrando processo Node antigo na porta ${port} (PID ${pid})..."
+      kill -TERM "$pid" 2>/dev/null || true
+      local tries=0
+      while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 6 ]; do
+        sleep 0.5
+        tries=$((tries + 1))
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+    fi
+  done
+}
+
 RESTARTED=0
 AAPANEL_SCRIPT="/www/server/nodejs/vhost/scripts/${APP_NAME}.sh"
 if [ ! -f "$AAPANEL_SCRIPT" ] && [ -d "/www/server/nodejs/vhost/scripts" ]; then
@@ -101,8 +134,22 @@ if [ ! -f "$AAPANEL_SCRIPT" ] && [ -d "/www/server/nodejs/vhost/scripts" ]; then
   done
 fi
 if [ -f "$AAPANEL_SCRIPT" ]; then
-  echo "🔄 Reiniciando projeto Node no aaPanel ($(basename "$AAPANEL_SCRIPT" .sh))..."
-  bash "$AAPANEL_SCRIPT" restart && RESTARTED=1 || true
+  PROJ_NAME="$(basename "$AAPANEL_SCRIPT" .sh)"
+  PID_FILE="/www/server/nodejs/vhost/pids/${PROJ_NAME}.pid"
+  echo "🔄 Reiniciando projeto Node no aaPanel (${PROJ_NAME})..."
+  if [ -f "$PID_FILE" ]; then
+    OLD_PID="$(tr -d '[:space:]' < "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$OLD_PID" ]; then
+      pkill -TERM -P "$OLD_PID" 2>/dev/null || true
+      kill -TERM "$OLD_PID" 2>/dev/null || true
+    fi
+  fi
+  stop_orphan_port_process "$LISTEN_PORT"
+  if [ "$(id -u)" -eq 0 ] && id www >/dev/null 2>&1; then
+    su -s /bin/bash www -c "bash '$AAPANEL_SCRIPT'" && RESTARTED=1 || true
+  else
+    bash "$AAPANEL_SCRIPT" && RESTARTED=1 || true
+  fi
 elif command -v pm2 >/dev/null 2>&1; then
   if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
     echo "🔄 Reiniciando processo PM2 ($APP_NAME)..."
@@ -118,13 +165,13 @@ fi
 
 if [ "$RESTARTED" -eq 1 ]; then
   sleep 2
-  LISTEN_PORT="3009"
-  if [ -f ".env" ]; then
-    ENV_PORT="$(grep -E '^PORT=' .env | head -n1 | cut -d= -f2- | tr -d '"\r ' || true)"
-    [ -n "$ENV_PORT" ] && LISTEN_PORT="$ENV_PORT"
+  HEALTH_JSON=""
+  if command -v curl >/dev/null 2>&1; then
+    HEALTH_JSON="$(curl -fsS "http://127.0.0.1:${LISTEN_PORT}/api/health" 2>/dev/null || true)"
   fi
-  if command -v curl >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:${LISTEN_PORT}/api/health" >/dev/null 2>&1; then
+  if [ -n "$HEALTH_JSON" ]; then
     echo "💚 Healthcheck OK em http://127.0.0.1:${LISTEN_PORT}/api/health"
+    echo "   $HEALTH_JSON"
   else
     echo "ℹ️  Reinício solicitado. Verifique os logs no aaPanel caso esteja subindo agora."
   fi
