@@ -387,5 +387,23 @@ describe("Painel Central de Licenças, Auth, Webhooks & Mensageria Oficial", () 
     const syncJson = await syncRes.json();
     assert.equal(syncJson.ok, true);
     assert.equal(syncJson.release.version, "1.2.0");
+
+    const listAdminRes = await fetch(`${baseUrl}/api/admin/releases`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(listAdminRes.status, 200);
+    const listAdminJson = await listAdminRes.json();
+    assert.ok(typeof listAdminJson.default_github_repo === "string");
+    assert.equal(typeof listAdminJson.auto_sync_enabled, "boolean");
+
+    const syncAdminRes = await fetch(`${baseUrl}/api/admin/releases/sync-github`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ repo: "criativo/demo" }),
+    });
+    assert.equal(syncAdminRes.status, 200);
+    const syncAdminJson = await syncAdminRes.json();
+    assert.equal(syncAdminJson.ok, true);
+    assert.equal(syncAdminJson.release.version, "1.2.0");
   });
 });

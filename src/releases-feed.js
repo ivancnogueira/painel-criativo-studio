@@ -451,7 +451,11 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
   });
 
   router.get("/admin/releases", hubApi.requireAdmin, (_req, res) => {
-    return res.json({ releases: listReleases() });
+    return res.json({
+      releases: listReleases(),
+      default_github_repo: autoGithubRepo,
+      auto_sync_enabled: enableAutoGithubSync,
+    });
   });
 
   router.post("/admin/releases", hubApi.requireAdmin, (req, res) => {
@@ -472,6 +476,24 @@ export function createReleasesFeedRouter(hubApi, options = {}) {
       return res.json({ ok: true, draft });
     } catch (err) {
       const status = Number(err?.statusCode) || 500;
+      return res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  router.post("/admin/releases/sync-github", hubApi.requireAdmin, async (req, res) => {
+    try {
+      const repo = String(req.body?.repo || autoGithubRepo).trim();
+      const tag = String(req.body?.tag || "").trim();
+      const synced = await syncLatestFromGithub({ repo, tag });
+      if (!synced.ok) {
+        return res.status(400).json({
+          error: "Nenhuma release válida com artefatos foi encontrada nesse repositório/tag.",
+          draft: synced.draft,
+        });
+      }
+      return res.json(synced);
+    } catch (err) {
+      const status = Number(err?.statusCode) || 502;
       return res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });

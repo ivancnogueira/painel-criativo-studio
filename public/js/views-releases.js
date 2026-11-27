@@ -44,35 +44,51 @@ function buildNativeArtifactsFromInputs(root) {
 registerView("releases", {
   async render(root) {
     let releases = store.get().releases || [];
+    let defaultGithubRepo = "ivancnogueira/criativo-studio";
+    let autoSyncEnabled = false;
+    try {
+      const meta = await api("/api/admin/releases");
+      if (Array.isArray(meta?.releases)) releases = meta.releases;
+      if (meta?.default_github_repo) defaultGithubRepo = meta.default_github_repo;
+      autoSyncEnabled = Boolean(meta?.auto_sync_enabled);
+    } catch {
+      // mantém dados do store local caso a consulta falhe
+    }
 
     root.innerHTML = `
       <div class="view-stack">
         <div class="view-header">
           <div>
             <h1>Releases & Versões</h1>
-            <p class="muted">Importe releases do GitHub, publique links nativos (.exe, .dmg, .AppImage) ou Hot-Bundles JSON.</p>
+            <p class="muted">Sincronize do GitHub em 1 clique, importe para revisar ou publique links/Hot-Bundles manuais.</p>
           </div>
+          <span class="pill ${autoSyncEnabled ? "pill-active" : "pill-warn"}">
+            ${autoSyncEnabled ? "Auto-Sync GitHub: Ativo (10 min)" : "Auto-Sync GitHub: Desligado"}
+          </span>
         </div>
 
         <section class="panel-card">
           <div class="card-header row-between">
             <div>
               <h2>Importar & Publicar Release</h2>
-              <p class="muted">Importe uma release do GitHub em 1 clique — versão, changelog, instaladores e SHA-256 são preenchidos automaticamente.</p>
+              <p class="muted">Use "Sincronizar e Publicar Agora" para publicar direto em 1 clique ou "Importar para Revisar" antes de salvar.</p>
             </div>
           </div>
           <div class="grid-3 mb-8">
             <label class="field">
               <span>Repositório (owner/repo)</span>
-              <input type="text" id="gh-repo" placeholder="exemplo-org/criativo-app" />
+              <input type="text" id="gh-repo" value="${escapeHtml(defaultGithubRepo)}" placeholder="ivancnogueira/criativo-studio" />
             </label>
             <label class="field">
               <span>Tag (vazia = latest)</span>
-              <input type="text" id="gh-tag" placeholder="v1.0.4" />
+              <input type="text" id="gh-tag" placeholder="v1.0.6" />
             </label>
             <div class="field" style="justify-content:flex-end">
               <span>&nbsp;</span>
-              <button type="button" class="btn btn-secondary" id="btn-import-gh">Importar do GitHub</button>
+              <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="btn-sync-gh-now">Sincronizar e Publicar Agora</button>
+                <button type="button" class="btn btn-secondary" id="btn-import-gh">Importar para Revisar</button>
+              </div>
             </div>
           </div>
 
@@ -195,6 +211,28 @@ registerView("releases", {
       const text = await file.text();
       root.querySelector("#rel-hot-json").value = text;
       showToast(`Arquivo ${file.name} carregado no Hot-Bundle!`, "success");
+    });
+
+    root.querySelector("#btn-sync-gh-now")?.addEventListener("click", async () => {
+      const repo = root.querySelector("#gh-repo").value.trim() || defaultGithubRepo;
+      const tag = root.querySelector("#gh-tag").value.trim();
+      const btn = root.querySelector("#btn-sync-gh-now");
+      if (btn) btn.disabled = true;
+      try {
+        const res = await api("/api/admin/releases/sync-github", {
+          method: "POST",
+          body: JSON.stringify({ repo, tag }),
+        });
+        const ver = res?.release?.version || res?.draft?.version || "?";
+        showToast(`Release v${ver} sincronizada e publicada automaticamente!`, "success");
+        await refreshDashboardData(["releases"]);
+        releases = store.get().releases || [];
+        renderTimeline(releases);
+      } catch (err) {
+        showToast(`Erro ao sincronizar GitHub: ${err.message}`, "error");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
 
     root.querySelector("#btn-import-gh")?.addEventListener("click", async () => {
