@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { createLicenseHub } from "./src/license-hub.js";
 import { createSalesWebhooksRouter } from "./src/webhooks-sales.js";
 import { createIntegrationsWebhooksRouter } from "./src/webhooks-integrations.js";
+import { createMetaWebhookRelayRouter } from "./src/meta-webhook-relay.js";
 
 if (typeof process.loadEnvFile === "function") {
   try {
@@ -53,8 +54,10 @@ export function createPainelApp(options = {}) {
   const licenseHub = createLicenseHub(options.licenseHub || {});
   const salesRouter = createSalesWebhooksRouter(licenseHub, options.salesWebhooks || {});
   const integrationsRouter = createIntegrationsWebhooksRouter(licenseHub, options.integrations || {});
+  const metaRelayRouter = createMetaWebhookRelayRouter({ db: licenseHub.db });
 
   app.use("/api", licenseHub.router);
+  app.use("/api", metaRelayRouter);
   app.use("/api", integrationsRouter);
   app.use("/api", salesRouter);
 

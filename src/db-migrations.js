@@ -249,5 +249,28 @@ export function ensureSchemaAndMigrations(db) {
     UPDATE licenses SET amount_cents = 0 WHERE amount_cents IS NULL;
     UPDATE licenses SET is_simulated = 0 WHERE is_simulated IS NULL;
     UPDATE licenses SET delivery_token = lower(hex(randomblob(16))) WHERE delivery_token IS NULL OR delivery_token = '';
+
+    CREATE TABLE IF NOT EXISTS meta_relay_channels (
+      channel_id TEXT PRIMARY KEY,
+      license_id TEXT NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
+      verify_token TEXT NOT NULL,
+      channel_secret_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      rotated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_meta_relay_channels_license ON meta_relay_channels(license_id);
+
+    CREATE TABLE IF NOT EXISTS meta_relay_queue (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL REFERENCES meta_relay_channels(channel_id) ON DELETE CASCADE,
+      raw_body TEXT NOT NULL,
+      signature_header TEXT,
+      headers_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_meta_relay_queue_channel ON meta_relay_queue(channel_id, created_at);
   `);
 }
